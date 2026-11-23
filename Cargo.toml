@@ -2,7 +2,7 @@
 name = "drishy"
 version = "0.1.0"
 edition = "2024"
-description = "A QOI image codec with indexed parallel decoding"
+description = "A Rust QOI codec with parallel restart-block decoding"
 license = "MIT"
 
 [dependencies]
@@ -15,4 +15,8 @@ rapid-qoi = "0.6.3"
 
 [[bench]]
 name = "decode"
+harness = false
+
+[[bench]]
+name = "restart_qoi"
 harness = false

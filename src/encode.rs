@@ -19,6 +19,21 @@ pub fn encode(header: Header, pixels: &[u8]) -> Result<Vec<u8>, QoiError> {
     output.push(header.channels);
     output.push(header.colorspace);
 
+    encode_payload(header, pixels, &mut output)?;
+    output.extend_from_slice(&END_MARKER);
+    Ok(output)
+}
+
+/// Appends a QOI pixel stream without a file header or end marker.
+pub(crate) fn encode_payload(
+    header: Header,
+    pixels: &[u8],
+    output: &mut Vec<u8>,
+) -> Result<(), QoiError> {
+    if pixels.len() != header.byte_count()? {
+        return Err(QoiError::PixelBufferSize);
+    }
+
     let channels = usize::from(header.channels);
     let mut previous = Pixel([0, 0, 0, 255]);
     let mut index = [Pixel([0, 0, 0, 0]); 64];
@@ -81,8 +96,7 @@ pub fn encode(header: Header, pixels: &[u8]) -> Result<Vec<u8>, QoiError> {
     if run != 0 {
         output.push(0xc0 | (run - 1));
     }
-    output.extend_from_slice(&END_MARKER);
-    Ok(output)
+    Ok(())
 }
 
 pub fn encode_rgb_or_rgba(

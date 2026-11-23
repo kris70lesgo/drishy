@@ -232,14 +232,6 @@ fn decode_range_impl<const CHANNELS: usize>(
         pixels = tail;
         let mut pixel = state.previous;
         match input {
-            [0xfe, red, green, blue, rest @ ..] => {
-                pixel.0[..3].copy_from_slice(&[*red, *green, *blue]);
-                input = rest;
-            }
-            [0xff, red, green, blue, alpha, rest @ ..] => {
-                pixel.0.copy_from_slice(&[*red, *green, *blue, *alpha]);
-                input = rest;
-            }
             [tag @ 0..=0x3f, rest @ ..] => {
                 pixel = state.index[usize::from(*tag)];
                 input = rest;
@@ -283,6 +275,14 @@ fn decode_range_impl<const CHANNELS: usize>(
                 state.previous = pixel;
                 pixel_offset += count;
                 continue;
+            }
+            [0xfe, red, green, blue, rest @ ..] => {
+                pixel.0[..3].copy_from_slice(&[*red, *green, *blue]);
+                input = rest;
+            }
+            [0xff, red, green, blue, alpha, rest @ ..] => {
+                pixel.0.copy_from_slice(&[*red, *green, *blue, *alpha]);
+                input = rest;
             }
             _ => {
                 return Err(QoiError::InvalidData("truncated or invalid pixel chunk"));
