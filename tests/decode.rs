@@ -15,6 +15,14 @@ fn round_trips_rgb_and_rgba_pixels() {
         assert_eq!(header.height, 2);
         assert_eq!(header.channels, channels);
         assert_eq!(decoded, pixels);
+        let mut reused = vec![0; pixels.len()];
+        assert_eq!(decode::decode_into(&qoi, &mut reused).unwrap(), header);
+        assert_eq!(reused, pixels);
+        let mut wrong_size = vec![0; pixels.len() - 1];
+        assert_eq!(
+            decode::decode_into(&qoi, &mut wrong_size),
+            Err(decode::QoiError::PixelBufferSize)
+        );
     }
 }
 

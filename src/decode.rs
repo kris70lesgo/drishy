@@ -284,7 +284,9 @@ fn decode_range_impl<const CHANNELS: usize>(
                 pixel_offset += count;
                 continue;
             }
-            _ => return Err(QoiError::InvalidData("truncated or invalid pixel chunk")),
+            _ => {
+                return Err(QoiError::InvalidData("truncated or invalid pixel chunk"));
+            }
         }
 
         destination.copy_from_slice(&pixel.0[..CHANNELS]);
@@ -298,8 +300,21 @@ fn decode_range_impl<const CHANNELS: usize>(
     Ok(state)
 }
 
-pub fn decode(bytes: &[u8]) -> Result<(Header, Vec<u8>), QoiError> {
+/// Decodes a QOI image into an existing RGB or RGBA pixel buffer.
+pub fn decode_into(bytes: &[u8], output: &mut [u8]) -> Result<Header, QoiError> {
     let header = read_header(bytes)?;
+    decode_into_with_header(bytes, header, output)?;
+    Ok(header)
+}
+
+fn decode_into_with_header(
+    bytes: &[u8],
+    header: Header,
+    output: &mut [u8],
+) -> Result<(), QoiError> {
+    if output.len() != header.byte_count()? {
+        return Err(QoiError::PixelBufferSize);
+    }
     if bytes.len() < HEADER_SIZE + END_MARKER.len() {
         return Err(QoiError::InvalidData(
             "file is shorter than the header and end marker",
@@ -309,17 +324,22 @@ pub fn decode(bytes: &[u8]) -> Result<(Header, Vec<u8>), QoiError> {
     if bytes[end..] != END_MARKER {
         return Err(QoiError::InvalidData("invalid end marker"));
     }
-
-    let mut output = vec![0; header.byte_count()?];
     let state = decode_range(
         bytes,
         header,
         DecoderState::default(),
         header.pixel_count()?,
-        &mut output,
+        output,
     )?;
     if state.input_offset != end {
         return Err(QoiError::InvalidData("unexpected data after final pixel"));
     }
+    Ok(())
+}
+
+pub fn decode(bytes: &[u8]) -> Result<(Header, Vec<u8>), QoiError> {
+    let header = read_header(bytes)?;
+    let mut output = vec![0; header.byte_count()?];
+    decode_into_with_header(bytes, header, &mut output)?;
     Ok((header, output))
 }

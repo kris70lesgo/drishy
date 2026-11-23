@@ -16,9 +16,19 @@ struct BenchImage {
     bytes: Vec<u8>,
     width: u32,
     height: u32,
+    pixel_bytes: usize,
     opcodes: [u64; 6],
     indexes: Vec<(usize, DecodeIndex)>,
 }
+
+#[derive(Clone, Copy)]
+struct Timing {
+    median: Duration,
+    fastest: Duration,
+    slowest: Duration,
+}
+
+type DecoderCallbacks<'a> = [&'a mut dyn FnMut(&BenchImage); 3];
 
 fn opcode_counts(bytes: &[u8]) -> [u64; 6] {
     let mut counts = [0; 6];
@@ -115,6 +125,18 @@ fn prepare(path: &Path) -> Result<Option<BenchImage>, Box<dyn std::error::Error>
     ensure_equal(path, "qoi", &expected, &qoi_pixels)?;
     let (_, rapid_pixels) = rapid_qoi::Qoi::decode_alloc(&bytes)?;
     ensure_equal(path, "rapid-qoi", &expected, &rapid_pixels)?;
+    let mut reused_pixels = vec![0; expected.len()];
+    decode::decode_into(&bytes, &mut reused_pixels)?;
+    ensure_equal(path, "Drishy decode_into", &expected, &reused_pixels)?;
+    qoi::decode_to_buf(&mut reused_pixels, &bytes)?;
+    ensure_equal(path, "qoi decode_to_buf", &expected, &reused_pixels)?;
+    rapid_qoi::Qoi::decode(&bytes, &mut reused_pixels)?;
+    ensure_equal(
+        path,
+        "rapid-qoi decode into buffer",
+        &expected,
+        &reused_pixels,
+    )?;
 
     Ok(Some(BenchImage {
         path: path.to_path_buf(),
@@ -122,6 +144,7 @@ fn prepare(path: &Path) -> Result<Option<BenchImage>, Box<dyn std::error::Error>
         bytes,
         width: header.width,
         height: header.height,
+        pixel_bytes: expected.len(),
         indexes: Vec::new(),
     }))
 }
@@ -150,21 +173,93 @@ fn measure(mut decode: impl FnMut()) -> Duration {
     Duration::from_secs_f64(samples[2])
 }
 
-fn measure_corpus(images: &[BenchImage], mut decode: impl FnMut(&[u8])) -> Duration {
-    for image in images {
-        decode(&image.bytes);
+fn measure_competitors(images: &[BenchImage], decoders: &mut DecoderCallbacks<'_>) -> [Timing; 3] {
+    for decoder in decoders.iter_mut() {
+        for image in images {
+            decoder(image);
+        }
     }
 
-    let mut samples = Vec::with_capacity(3);
-    for _ in 0..3 {
-        let start = Instant::now();
-        for image in images {
-            decode(&image.bytes);
+    let mut iterations = [0; 3];
+    for decoder_index in 0..3 {
+        let calibration_start = Instant::now();
+        while calibration_start.elapsed() < Duration::from_millis(100) {
+            for image in images {
+                decoders[decoder_index](image);
+            }
+            iterations[decoder_index] += 1;
         }
-        samples.push(start.elapsed().as_secs_f64());
     }
-    samples.sort_by(f64::total_cmp);
-    Duration::from_secs_f64(samples[1])
+
+    let orders = [
+        [0, 1, 2],
+        [1, 2, 0],
+        [2, 0, 1],
+        [0, 2, 1],
+        [2, 1, 0],
+        [1, 0, 2],
+    ];
+    let mut samples: [Vec<f64>; 3] = std::array::from_fn(|_| Vec::with_capacity(orders.len()));
+    for order in orders {
+        for decoder_index in order {
+            let start = Instant::now();
+            for _ in 0..iterations[decoder_index] {
+                for image in images {
+                    decoders[decoder_index](image);
+                }
+            }
+            samples[decoder_index]
+                .push(start.elapsed().as_secs_f64() / iterations[decoder_index] as f64);
+        }
+    }
+
+    samples.map(|mut samples| {
+        samples.sort_by(f64::total_cmp);
+        Timing {
+            median: Duration::from_secs_f64((samples[2] + samples[3]) / 2.0),
+            fastest: Duration::from_secs_f64(samples[0]),
+            slowest: Duration::from_secs_f64(samples[samples.len() - 1]),
+        }
+    })
+}
+
+fn measure_reused_output_buffers(images: &[BenchImage]) -> [Timing; 3] {
+    let max_pixel_bytes = images
+        .iter()
+        .map(|image| image.pixel_bytes)
+        .max()
+        .unwrap_or(0);
+    let mut drishy_output = vec![0; max_pixel_bytes];
+    let mut qoi_output = vec![0; max_pixel_bytes];
+    let mut rapid_output = vec![0; max_pixel_bytes];
+
+    let mut decode_drishy = |image: &BenchImage| {
+        let output = &mut drishy_output[..image.pixel_bytes];
+        black_box(
+            decode::decode_into(black_box(&image.bytes), black_box(output))
+                .expect("validated benchmark image"),
+        );
+        black_box(&drishy_output[..image.pixel_bytes]);
+    };
+    let mut decode_qoi = |image: &BenchImage| {
+        let output = &mut qoi_output[..image.pixel_bytes];
+        black_box(
+            qoi::decode_to_buf(black_box(output), black_box(&image.bytes))
+                .expect("validated benchmark image"),
+        );
+        black_box(&qoi_output[..image.pixel_bytes]);
+    };
+    let mut decode_rapid = |image: &BenchImage| {
+        let output = &mut rapid_output[..image.pixel_bytes];
+        black_box(
+            rapid_qoi::Qoi::decode(black_box(&image.bytes), black_box(output))
+                .expect("validated benchmark image"),
+        );
+        black_box(&rapid_output[..image.pixel_bytes]);
+    };
+    let mut decoders: DecoderCallbacks<'_> =
+        [&mut decode_drishy, &mut decode_qoi, &mut decode_rapid];
+    measure_competitors(images, &mut decoders)
 }
 
 fn measure_indexed_corpus(images: &[BenchImage], workers: usize) -> Duration {
@@ -262,17 +357,23 @@ fn measure_bound_indexed_corpus(decoders: &[IndexedDecoder<'_>]) -> Duration {
 fn print_results(
     name: &str,
     megapixels: f64,
-    drishy_time: Duration,
-    qoi_time: Duration,
-    rapid_time: Duration,
+    drishy_time: Timing,
+    qoi_time: Timing,
+    rapid_time: Timing,
 ) {
     println!(
-        "{name}: Drishy {:.0} Mp/s, qoi {:.0} Mp/s ({:.2}x), rapid-qoi {:.0} Mp/s ({:.2}x)",
-        megapixels / drishy_time.as_secs_f64(),
-        megapixels / qoi_time.as_secs_f64(),
-        drishy_time.as_secs_f64() / qoi_time.as_secs_f64(),
-        megapixels / rapid_time.as_secs_f64(),
-        drishy_time.as_secs_f64() / rapid_time.as_secs_f64(),
+        "{name}: Drishy {:.0} Mp/s [{:.0}–{:.0}], qoi {:.0} [{:.0}–{:.0}] ({:.2}x), rapid-qoi {:.0} [{:.0}–{:.0}] ({:.2}x)",
+        megapixels / drishy_time.median.as_secs_f64(),
+        megapixels / drishy_time.slowest.as_secs_f64(),
+        megapixels / drishy_time.fastest.as_secs_f64(),
+        megapixels / qoi_time.median.as_secs_f64(),
+        megapixels / qoi_time.slowest.as_secs_f64(),
+        megapixels / qoi_time.fastest.as_secs_f64(),
+        drishy_time.median.as_secs_f64() / qoi_time.median.as_secs_f64(),
+        megapixels / rapid_time.median.as_secs_f64(),
+        megapixels / rapid_time.slowest.as_secs_f64(),
+        megapixels / rapid_time.fastest.as_secs_f64(),
+        drishy_time.median.as_secs_f64() / rapid_time.median.as_secs_f64(),
     );
 }
 
@@ -283,18 +384,22 @@ fn benchmark_one(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
             format!("PNG could not be decoded: {}", path.display()),
         )
     })?;
-    let drishy_time = measure(|| {
+    let mut decode_drishy = |image: &BenchImage| {
         black_box(decode::decode(black_box(&image.bytes)).expect("validated benchmark image"));
-    });
-    let qoi_time = measure(|| {
+    };
+    let mut decode_qoi = |image: &BenchImage| {
         black_box(qoi::decode_to_vec(black_box(&image.bytes)).expect("validated benchmark image"));
-    });
-    let rapid_time = measure(|| {
+    };
+    let mut decode_rapid = |image: &BenchImage| {
         black_box(
             rapid_qoi::Qoi::decode_alloc(black_box(&image.bytes))
                 .expect("validated benchmark image"),
         );
-    });
+    };
+    let mut decoders: DecoderCallbacks<'_> =
+        [&mut decode_drishy, &mut decode_qoi, &mut decode_rapid];
+    let [drishy_time, qoi_time, rapid_time] =
+        measure_competitors(std::slice::from_ref(&image), &mut decoders);
     let megapixels = f64::from(image.width) * f64::from(image.height) / 1_000_000.0;
     print_results(
         &image.path.display().to_string(),
@@ -302,6 +407,15 @@ fn benchmark_one(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
         drishy_time,
         qoi_time,
         rapid_time,
+    );
+    let [drishy_buffer_time, qoi_buffer_time, rapid_buffer_time] =
+        measure_reused_output_buffers(std::slice::from_ref(&image));
+    print_results(
+        "Reused output buffer",
+        megapixels,
+        drishy_buffer_time,
+        qoi_buffer_time,
+        rapid_buffer_time,
     );
     let workers = std::thread::available_parallelism().map_or(1, |count| count.get());
     let build_start = Instant::now();
@@ -418,23 +532,36 @@ fn benchmark_corpus(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
         opcodes[5] as f64 * 100.0 / total_chunks as f64,
     );
 
-    let drishy_time = measure_corpus(&images, |bytes| {
-        black_box(decode::decode(black_box(bytes)).expect("validated benchmark image"));
-    });
-    let qoi_time = measure_corpus(&images, |bytes| {
-        black_box(qoi::decode_to_vec(black_box(bytes)).expect("validated benchmark image"));
-    });
-    let rapid_time = measure_corpus(&images, |bytes| {
+    let mut decode_drishy = |image: &BenchImage| {
+        black_box(decode::decode(black_box(&image.bytes)).expect("validated benchmark image"));
+    };
+    let mut decode_qoi = |image: &BenchImage| {
+        black_box(qoi::decode_to_vec(black_box(&image.bytes)).expect("validated benchmark image"));
+    };
+    let mut decode_rapid = |image: &BenchImage| {
         black_box(
-            rapid_qoi::Qoi::decode_alloc(black_box(bytes)).expect("validated benchmark image"),
+            rapid_qoi::Qoi::decode_alloc(black_box(&image.bytes))
+                .expect("validated benchmark image"),
         );
-    });
+    };
+    let mut decoders: DecoderCallbacks<'_> =
+        [&mut decode_drishy, &mut decode_qoi, &mut decode_rapid];
+    let [drishy_time, qoi_time, rapid_time] = measure_competitors(&images, &mut decoders);
     print_results(
         &format!("Full corpus, {} images", images.len()),
         total_megapixels,
         drishy_time,
         qoi_time,
         rapid_time,
+    );
+    let [drishy_buffer_time, qoi_buffer_time, rapid_buffer_time] =
+        measure_reused_output_buffers(&images);
+    print_results(
+        "Full corpus with reused output buffers",
+        total_megapixels,
+        drishy_buffer_time,
+        qoi_buffer_time,
+        rapid_buffer_time,
     );
     for (workers, index_build_time) in index_build_times {
         let (bound_decoders, validation_time) = bind_indexed_corpus(&images, workers)?;
