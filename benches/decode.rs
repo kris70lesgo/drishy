@@ -216,6 +216,29 @@ fn bind_indexed_corpus<'a>(
     Ok((decoders, start.elapsed()))
 }
 
+fn build_bound_indexed_corpus<'a>(
+    images: &'a [BenchImage],
+    workers: usize,
+) -> Result<(Vec<IndexedDecoder<'a>>, Duration), Box<dyn std::error::Error>> {
+    let mut build_time = Duration::ZERO;
+    let mut decoders = Vec::with_capacity(images.len());
+    for image in images {
+        let start = Instant::now();
+        let decoder = IndexedDecoder::build(&image.bytes, workers)?;
+        build_time += start.elapsed();
+        let (_, indexed_pixels) = decoder.decode()?;
+        let (_, serial_pixels) = decode::decode(&image.bytes)?;
+        ensure_equal(
+            &image.path,
+            "built indexed Drishy",
+            &serial_pixels,
+            &indexed_pixels,
+        )?;
+        decoders.push(decoder);
+    }
+    Ok((decoders, build_time))
+}
+
 fn measure_bound_indexed_corpus(decoders: &[IndexedDecoder<'_>]) -> Duration {
     let decode_all = |decoder: &IndexedDecoder<'_>| {
         black_box(decoder.decode().expect("validated indexed benchmark image"));
@@ -280,6 +303,27 @@ fn benchmark_one(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
         qoi_time,
         rapid_time,
     );
+    let workers = std::thread::available_parallelism().map_or(1, |count| count.get());
+    let build_start = Instant::now();
+    let indexed = IndexedDecoder::build(&image.bytes, workers)?;
+    let build_time = build_start.elapsed();
+    let indexed_pixels = indexed.decode()?.1;
+    let (_, serial_pixels) = decode::decode(&image.bytes)?;
+    ensure_equal(
+        &image.path,
+        "built indexed Drishy",
+        &serial_pixels,
+        &indexed_pixels,
+    )?;
+    let indexed_time = measure(|| {
+        black_box(indexed.decode().expect("validated indexed benchmark image"));
+    });
+    println!(
+        "Indexed Drishy ({workers} segments): {:.0} Mp/s bound repeated; {:.0} Mp/s including build + one decode ({:.3}s build)",
+        megapixels / indexed_time.as_secs_f64(),
+        megapixels / (indexed_time + build_time).as_secs_f64(),
+        build_time.as_secs_f64(),
+    );
     Ok(())
 }
 
@@ -320,7 +364,10 @@ fn benchmark_corpus(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    let worker_counts = [2, 4, 8, 10];
+    let max_workers = std::thread::available_parallelism().map_or(1, |count| count.get());
+    let mut worker_counts = vec![2, 4, 8, max_workers];
+    worker_counts.sort_unstable();
+    worker_counts.dedup();
     let mut index_build_times = Vec::with_capacity(worker_counts.len());
     for workers in worker_counts {
         let mut build_time = Duration::ZERO;
@@ -402,6 +449,13 @@ fn benchmark_corpus(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
             validation_time.as_secs_f64(),
         );
     }
+    let (built_decoders, build_time) = build_bound_indexed_corpus(&images, max_workers)?;
+    let decode_time = measure_bound_indexed_corpus(&built_decoders);
+    println!(
+        "Fused build + bound decode ({max_workers} segments): {:.0} Mp/s including build + one decode ({:.2}s build)",
+        total_megapixels / (build_time + decode_time).as_secs_f64(),
+        build_time.as_secs_f64(),
+    );
     Ok(())
 }
 

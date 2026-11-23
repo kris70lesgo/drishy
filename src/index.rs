@@ -26,11 +26,14 @@ impl DecodeIndex {
         let mut state = DecoderState::default();
         let mut next_boundary = pixel_count.div_ceil(workers);
         let data_end = qoi.len() - 8;
+        let mut fingerprint = fingerprint(&qoi[..crate::decode::HEADER_SIZE]);
         while state.pixel_offset < pixel_count {
             if state.input_offset >= data_end {
                 return Err(QoiError::InvalidData("pixel data ends early"));
             }
+            let chunk_start = state.input_offset;
             read_chunk(qoi, &mut state)?;
+            fingerprint = fingerprint_update(fingerprint, &qoi[chunk_start..state.input_offset]);
             if state.pixel_offset > pixel_count {
                 return Err(QoiError::InvalidData("run exceeds image dimensions"));
             }
@@ -47,10 +50,11 @@ impl DecodeIndex {
         if state.input_offset != data_end {
             return Err(QoiError::InvalidData("unexpected data after final pixel"));
         }
+        fingerprint = fingerprint_update(fingerprint, &qoi[data_end..]);
 
         Ok(Self {
             file_size: qoi.len() as u64,
-            fingerprint: fingerprint(qoi),
+            fingerprint,
             checkpoints,
         })
     }
@@ -179,7 +183,12 @@ fn read_u64<R: Read>(reader: &mut R) -> io::Result<u64> {
 
 fn fingerprint(bytes: &[u8]) -> u64 {
     // FNV-1a catches stale or mismatched sidecar indexes without a new dependency.
-    bytes.iter().fold(0xcbf29ce484222325, |hash, byte| {
-        (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
-    })
+    fingerprint_update(0xcbf29ce484222325, bytes)
+}
+
+fn fingerprint_update(mut hash: u64, bytes: &[u8]) -> u64 {
+    for byte in bytes {
+        hash = (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3);
+    }
+    hash
 }

@@ -9,8 +9,22 @@ use std::sync::Mutex;
 /// is alive, so the file fingerprint only needs to be checked once.
 pub struct IndexedDecoder<'a> {
     bytes: &'a [u8],
-    index: &'a DecodeIndex,
+    index: IndexStorage<'a>,
     header: Header,
+}
+
+enum IndexStorage<'a> {
+    Borrowed(&'a DecodeIndex),
+    Owned(DecodeIndex),
+}
+
+impl IndexStorage<'_> {
+    fn get(&self) -> &DecodeIndex {
+        match self {
+            Self::Borrowed(index) => index,
+            Self::Owned(index) => index,
+        }
+    }
 }
 
 impl<'a> IndexedDecoder<'a> {
@@ -21,13 +35,25 @@ impl<'a> IndexedDecoder<'a> {
         }
         Ok(Self {
             bytes,
-            index,
+            index: IndexStorage::Borrowed(index),
+            header,
+        })
+    }
+
+    /// Builds and binds an index in one pass over the QOI data.
+    pub fn build(bytes: &'a [u8], workers: usize) -> Result<Self, QoiError> {
+        let header = crate::decode::read_header(bytes)?;
+        let index = DecodeIndex::build(bytes, workers)?;
+        Ok(Self {
+            bytes,
+            index: IndexStorage::Owned(index),
             header,
         })
     }
 
     pub fn decode(&self) -> Result<(Header, Vec<u8>), QoiError> {
-        if self.index.checkpoints.len() == 1 {
+        let index = self.index.get();
+        if index.checkpoints.len() == 1 {
             return decode(self.bytes);
         }
 
@@ -39,9 +65,8 @@ impl<'a> IndexedDecoder<'a> {
         let first_error = Mutex::new(None);
 
         scope(|scope| {
-            for (position, initial_state) in self.index.checkpoints.iter().enumerate() {
-                let end_pixel = self
-                    .index
+            for (position, initial_state) in index.checkpoints.iter().enumerate() {
+                let end_pixel = index
                     .checkpoints
                     .get(position + 1)
                     .map_or(total_pixels, |checkpoint| checkpoint.pixel_offset);

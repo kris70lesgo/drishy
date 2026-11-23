@@ -118,10 +118,14 @@ fn indexed_parallel_decode_matches_serial_decode() {
     let (parallel_header, parallel) = parallel::decode_indexed(&qoi, &index).unwrap();
     let bound = parallel::IndexedDecoder::new(&qoi, &index).unwrap();
     let (bound_header, bound_pixels) = bound.decode().unwrap();
+    let built = parallel::IndexedDecoder::build(&qoi, 6).unwrap();
+    let (built_header, built_pixels) = built.decode().unwrap();
     assert_eq!(parallel_header, header);
     assert_eq!(parallel, serial);
     assert_eq!(bound_header, header);
     assert_eq!(bound_pixels, serial);
+    assert_eq!(built_header, header);
+    assert_eq!(built_pixels, serial);
 }
 
 #[test]
