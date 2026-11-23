@@ -1,4 +1,4 @@
-use crate::decode::{DecoderState, Header, QoiError, decode, decode_range};
+use crate::decode::{DecoderState, Header, QoiError, decode_into, decode_range};
 use crate::index::DecodeIndex;
 use rayon::scope;
 use std::sync::Mutex;
@@ -52,16 +52,26 @@ impl<'a> IndexedDecoder<'a> {
     }
 
     pub fn decode(&self) -> Result<(Header, Vec<u8>), QoiError> {
+        let mut output = vec![0; self.header.byte_count()?];
+        let header = self.decode_into(&mut output)?;
+        Ok((header, output))
+    }
+
+    /// Decodes the image into a caller-owned RGB or RGBA pixel buffer.
+    pub fn decode_into(&self, output: &mut [u8]) -> Result<Header, QoiError> {
         let index = self.index.get();
+        let header = self.header;
+        if output.len() != header.byte_count()? {
+            return Err(QoiError::PixelBufferSize);
+        }
         if index.checkpoints.len() == 1 {
-            return decode(self.bytes);
+            decode_into(self.bytes, output)?;
+            return Ok(header);
         }
 
-        let header = self.header;
         let channels = usize::from(header.channels);
         let total_pixels = header.pixel_count()?;
-        let mut output = vec![0; header.byte_count()?];
-        let mut remaining = output.as_mut_slice();
+        let mut remaining = output;
         let first_error = Mutex::new(None);
 
         scope(|scope| {
@@ -91,7 +101,7 @@ impl<'a> IndexedDecoder<'a> {
         if let Some(error) = first_error.into_inner().expect("error mutex poisoned") {
             return Err(error);
         }
-        Ok((header, output))
+        Ok(header)
     }
 }
 

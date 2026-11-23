@@ -329,6 +329,14 @@ fn build_bound_indexed_corpus<'a>(
             &serial_pixels,
             &indexed_pixels,
         )?;
+        let mut reused_pixels = vec![0; serial_pixels.len()];
+        decoder.decode_into(&mut reused_pixels)?;
+        ensure_equal(
+            &image.path,
+            "built indexed Drishy decode_into",
+            &serial_pixels,
+            &reused_pixels,
+        )?;
         decoders.push(decoder);
     }
     Ok((decoders, build_time))
@@ -347,6 +355,41 @@ fn measure_bound_indexed_corpus(decoders: &[IndexedDecoder<'_>]) -> Duration {
         let start = Instant::now();
         for decoder in decoders {
             decode_all(decoder);
+        }
+        samples.push(start.elapsed().as_secs_f64());
+    }
+    samples.sort_by(f64::total_cmp);
+    Duration::from_secs_f64(samples[1])
+}
+
+fn measure_bound_indexed_reused_corpus(
+    decoders: &[IndexedDecoder<'_>],
+    images: &[BenchImage],
+) -> Duration {
+    let max_pixel_bytes = images
+        .iter()
+        .map(|image| image.pixel_bytes)
+        .max()
+        .unwrap_or(0);
+    let mut output = vec![0; max_pixel_bytes];
+    let mut decode_all = |decoder: &IndexedDecoder<'_>, image: &BenchImage| {
+        let pixels = &mut output[..image.pixel_bytes];
+        black_box(
+            decoder
+                .decode_into(black_box(pixels))
+                .expect("validated indexed benchmark image"),
+        );
+        black_box(&output[..image.pixel_bytes]);
+    };
+    for (decoder, image) in decoders.iter().zip(images) {
+        decode_all(decoder, image);
+    }
+
+    let mut samples = Vec::with_capacity(3);
+    for _ in 0..3 {
+        let start = Instant::now();
+        for (decoder, image) in decoders.iter().zip(images) {
+            decode_all(decoder, image);
         }
         samples.push(start.elapsed().as_secs_f64());
     }
@@ -429,12 +472,28 @@ fn benchmark_one(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
         &serial_pixels,
         &indexed_pixels,
     )?;
+    let mut indexed_reused_pixels = vec![0; serial_pixels.len()];
+    indexed.decode_into(&mut indexed_reused_pixels)?;
+    ensure_equal(
+        &image.path,
+        "built indexed Drishy decode_into",
+        &serial_pixels,
+        &indexed_reused_pixels,
+    )?;
     let indexed_time = measure(|| {
         black_box(indexed.decode().expect("validated indexed benchmark image"));
     });
+    let indexed_reused_time = measure(|| {
+        black_box(
+            indexed
+                .decode_into(black_box(&mut indexed_reused_pixels))
+                .expect("validated indexed benchmark image"),
+        );
+    });
     println!(
-        "Indexed Drishy ({workers} segments): {:.0} Mp/s bound repeated; {:.0} Mp/s including build + one decode ({:.3}s build)",
+        "Indexed Drishy ({workers} segments): {:.0} Mp/s bound repeated; {:.0} Mp/s with reused output; {:.0} Mp/s including build + one decode ({:.3}s build)",
         megapixels / indexed_time.as_secs_f64(),
+        megapixels / indexed_reused_time.as_secs_f64(),
         megapixels / (indexed_time + build_time).as_secs_f64(),
         build_time.as_secs_f64(),
     );
@@ -567,9 +626,11 @@ fn benchmark_corpus(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
         let (bound_decoders, validation_time) = bind_indexed_corpus(&images, workers)?;
         let checked_time = measure_indexed_corpus(&images, workers);
         let indexed_time = measure_bound_indexed_corpus(&bound_decoders);
+        let indexed_reused_time = measure_bound_indexed_reused_corpus(&bound_decoders, &images);
         println!(
-            "Indexed Drishy ({workers} segments): {:.0} Mp/s bound repeated; {:.0} Mp/s with per-call validation; {:.0} Mp/s including build + bind + one decode ({:.2}s build, {:.2}s bind)",
+            "Indexed Drishy ({workers} segments): {:.0} Mp/s bound repeated; {:.0} Mp/s with reused output; {:.0} Mp/s with per-call validation; {:.0} Mp/s including build + bind + one decode ({:.2}s build, {:.2}s bind)",
             total_megapixels / indexed_time.as_secs_f64(),
+            total_megapixels / indexed_reused_time.as_secs_f64(),
             total_megapixels / checked_time.as_secs_f64(),
             total_megapixels / (indexed_time + index_build_time + validation_time).as_secs_f64(),
             index_build_time.as_secs_f64(),
