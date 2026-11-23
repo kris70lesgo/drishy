@@ -1,0 +1,14 @@
+[package]
+name = "drishy"
+version = "0.1.0"
+edition = "2024"
+description = "A QOI image codec with indexed parallel decoding"
+license = "MIT"
+
+[dependencies]
+image = { version = "0.25", default-features = false, features = ["png"] }
+rayon = "1.10"
+
+[[bench]]
+name = "decode"
+harness = false
