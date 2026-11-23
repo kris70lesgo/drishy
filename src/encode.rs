@@ -29,7 +29,6 @@ pub fn encode(header: Header, pixels: &[u8]) -> Result<Vec<u8>, QoiError> {
         let mut current = previous;
         current.0[..channels].copy_from_slice(pixel_bytes);
         if current == previous {
-            index[current.hash()] = current;
             run += 1;
             if run == 62 || pixel_number + 1 == total_pixels {
                 output.push(0xc0 | (run - 1));

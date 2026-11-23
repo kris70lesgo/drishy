@@ -16,3 +16,9 @@ cargo run --release -- decode-indexed input.qoi input.qoi.idx output.png
 ```sh
 cargo test
 ```
+
+## Benchmark
+
+```sh
+cargo bench --bench decode -- path/to/image.qoi
+```

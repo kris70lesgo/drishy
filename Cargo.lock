@@ -77,6 +77,8 @@ name = "drishy"
 version = "0.1.0"
 dependencies = [
  "image",
+ "qoi",
+ "rapid-qoi",
  "rayon",
 ]
 
@@ -176,6 +178,21 @@ name = "pxfm"
 version = "0.1.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d55d956fa96f5ec02be2e13af0e20391a5aa83d6a074e3ad368959d0fab299ea"
+
+[[package]]
+name = "qoi"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7f6d64c71eb498fe9eae14ce4ec935c555749aef511cca85b5568910d6e48001"
+dependencies = [
+ "bytemuck",
+]
+
+[[package]]
+name = "rapid-qoi"
+version = "0.6.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c23c078d3704b4757979b3954ff1b52dd975fb759a08b11f85abaf1ab7eb4e22"
 
 [[package]]
 name = "rayon"

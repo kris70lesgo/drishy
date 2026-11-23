@@ -9,6 +9,10 @@ license = "MIT"
 image = { version = "0.25", default-features = false, features = ["png"] }
 rayon = "1.10"
 
+[dev-dependencies]
+qoi = "0.4.1"
+rapid-qoi = "0.6.3"
+
 [[bench]]
 name = "decode"
 harness = false

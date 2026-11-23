@@ -19,6 +19,14 @@ fn round_trips_rgb_and_rgba_pixels() {
 }
 
 #[test]
+fn encoder_does_not_index_pixels_seen_only_in_a_run() {
+    let pixels = [0, 0, 0, 255, 45, 45, 45, 255, 0, 0, 0, 255];
+    let qoi = encode::encode_rgb_or_rgba(3, 1, 4, &pixels).unwrap();
+    assert_eq!(&qoi[14..23], &[0xc0, 0xfe, 45, 45, 45, 0xfe, 0, 0, 0]);
+    assert_eq!(decode::decode(&qoi).unwrap().1, pixels);
+}
+
+#[test]
 fn rejects_truncated_bad_and_inconsistent_files() {
     assert!(decode::read_header(b"qoif").is_err());
     let qoi = encode::encode_rgb_or_rgba(1, 1, 3, &[1, 2, 3]).unwrap();

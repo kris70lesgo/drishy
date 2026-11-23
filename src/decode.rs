@@ -89,8 +89,13 @@ pub(crate) struct Pixel(pub [u8; 4]);
 
 impl Pixel {
     pub(crate) fn hash(self) -> usize {
-        let [r, g, b, a] = self.0;
-        (usize::from(r) * 3 + usize::from(g) * 5 + usize::from(b) * 7 + usize::from(a) * 11) & 63
+        let channels = u32::from_ne_bytes(self.0) as u64;
+        let packed = ((channels & 0xff00_ff00) << 32) | (channels & 0x00ff_00ff);
+        (packed
+            .wrapping_mul(0x0300_0700_0005_000b)
+            .to_le()
+            .swap_bytes() as u8
+            & 63) as usize
     }
 }
 
@@ -181,27 +186,107 @@ pub(crate) fn read_chunk(
 pub(crate) fn decode_range(
     bytes: &[u8],
     header: Header,
-    mut state: DecoderState,
+    state: DecoderState,
     end_pixel: usize,
     output: &mut [u8],
 ) -> Result<DecoderState, QoiError> {
     let channels = usize::from(header.channels);
     let start_pixel = state.pixel_offset;
-    if end_pixel > header.pixel_count()? || output.len() != (end_pixel - start_pixel) * channels {
+    if start_pixel > end_pixel
+        || end_pixel > header.pixel_count()?
+        || output.len() != (end_pixel - start_pixel) * channels
+    {
         return Err(QoiError::InvalidData("invalid decode range"));
     }
-    while state.pixel_offset < end_pixel {
-        let (pixel, count) = read_chunk(bytes, &mut state)?;
-        if state.pixel_offset > end_pixel {
-            return Err(QoiError::InvalidData("index checkpoint splits a pixel run"));
-        }
-        let byte_start = (state.pixel_offset - count - start_pixel) * channels;
-        for destination in
-            output[byte_start..byte_start + count * channels].chunks_exact_mut(channels)
-        {
-            destination.copy_from_slice(&pixel.0[..channels]);
-        }
+
+    match header.channels {
+        3 => decode_range_impl::<3>(bytes, state, end_pixel, output),
+        4 => decode_range_impl::<4>(bytes, state, end_pixel, output),
+        _ => Err(QoiError::InvalidChannels),
     }
+}
+
+fn decode_range_impl<const CHANNELS: usize>(
+    bytes: &[u8],
+    mut state: DecoderState,
+    end_pixel: usize,
+    output: &mut [u8],
+) -> Result<DecoderState, QoiError> {
+    let (mut pixels, remainder) = output.as_chunks_mut::<CHANNELS>();
+    if !remainder.is_empty() {
+        return Err(QoiError::InvalidData("invalid output buffer size"));
+    }
+    let mut input = bytes
+        .get(state.input_offset..)
+        .ok_or(QoiError::InvalidData("invalid input offset"))?;
+    let mut pixel_offset = state.pixel_offset;
+
+    while let [destination, tail @ ..] = pixels {
+        pixels = tail;
+        let mut pixel = state.previous;
+        match input {
+            [0xfe, red, green, blue, rest @ ..] => {
+                pixel.0[..3].copy_from_slice(&[*red, *green, *blue]);
+                input = rest;
+            }
+            [0xff, red, green, blue, alpha, rest @ ..] => {
+                pixel.0.copy_from_slice(&[*red, *green, *blue, *alpha]);
+                input = rest;
+            }
+            [tag @ 0..=0x3f, rest @ ..] => {
+                pixel = state.index[usize::from(*tag)];
+                input = rest;
+                destination.copy_from_slice(&pixel.0[..CHANNELS]);
+                state.index[pixel.hash()] = pixel;
+                state.previous = pixel;
+                pixel_offset += 1;
+                continue;
+            }
+            [tag @ 0x40..=0x7f, rest @ ..] => {
+                pixel.0[0] = pixel.0[0].wrapping_add(((*tag >> 4) & 3).wrapping_sub(2));
+                pixel.0[1] = pixel.0[1].wrapping_add(((*tag >> 2) & 3).wrapping_sub(2));
+                pixel.0[2] = pixel.0[2].wrapping_add((*tag & 3).wrapping_sub(2));
+                input = rest;
+            }
+            [tag @ 0x80..=0xbf, second, rest @ ..] => {
+                let green = (*tag & 0x3f).wrapping_sub(32);
+                pixel.0[0] =
+                    pixel.0[0].wrapping_add(green.wrapping_sub(8).wrapping_add(*second >> 4));
+                pixel.0[1] = pixel.0[1].wrapping_add(green);
+                pixel.0[2] =
+                    pixel.0[2].wrapping_add(green.wrapping_sub(8).wrapping_add(*second & 0x0f));
+                input = rest;
+            }
+            [tag @ 0xc0..=0xfd, rest @ ..] => {
+                let count = usize::from(*tag & 0x3f) + 1;
+                if pixel_offset + count > end_pixel {
+                    return Err(QoiError::InvalidData(
+                        "run exceeds image dimensions or decode range",
+                    ));
+                }
+                let mut output_pixel = [0; CHANNELS];
+                output_pixel.copy_from_slice(&pixel.0[..CHANNELS]);
+                destination.copy_from_slice(&output_pixel);
+                let (fill, remaining) = pixels.split_at_mut(count - 1);
+                fill.fill(output_pixel);
+                pixels = remaining;
+                input = rest;
+                pixel_offset += count;
+                state.index[pixel.hash()] = pixel;
+                state.previous = pixel;
+                continue;
+            }
+            _ => return Err(QoiError::InvalidData("truncated or invalid pixel chunk")),
+        }
+
+        destination.copy_from_slice(&pixel.0[..CHANNELS]);
+        state.index[pixel.hash()] = pixel;
+        state.previous = pixel;
+        pixel_offset += 1;
+    }
+
+    state.input_offset = bytes.len() - input.len();
+    state.pixel_offset = pixel_offset;
     Ok(state)
 }
 
