@@ -21,4 +21,7 @@ cargo test
 
 ```sh
 cargo bench --bench decode -- path/to/image.qoi
+cargo bench --bench decode -- path/to/qoi_benchmark_suite
 ```
+
+The corpus run checks decoded pixels against two independent Rust decoders, then reports serial and indexed throughput. It also separates index build and validation time from repeated decoding. The official suite is available from [qoiformat.org](https://qoiformat.org/benchmark/qoi_benchmark_suite.tar).

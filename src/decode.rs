@@ -174,7 +174,14 @@ pub(crate) fn read_chunk(
         },
     }
 
-    state.index[pixel.hash()] = pixel;
+    let update_index = match tag {
+        0..=0x3f => false,
+        0xc0..=0xfd => state.pixel_offset == 0,
+        _ => true,
+    };
+    if update_index {
+        state.index[pixel.hash()] = pixel;
+    }
     state.pixel_offset = state
         .pixel_offset
         .checked_add(count)
@@ -237,7 +244,6 @@ fn decode_range_impl<const CHANNELS: usize>(
                 pixel = state.index[usize::from(*tag)];
                 input = rest;
                 destination.copy_from_slice(&pixel.0[..CHANNELS]);
-                state.index[pixel.hash()] = pixel;
                 state.previous = pixel;
                 pixel_offset += 1;
                 continue;
@@ -271,9 +277,11 @@ fn decode_range_impl<const CHANNELS: usize>(
                 fill.fill(output_pixel);
                 pixels = remaining;
                 input = rest;
-                pixel_offset += count;
-                state.index[pixel.hash()] = pixel;
+                if pixel_offset == 0 {
+                    state.index[pixel.hash()] = pixel;
+                }
                 state.previous = pixel;
+                pixel_offset += count;
                 continue;
             }
             _ => return Err(QoiError::InvalidData("truncated or invalid pixel chunk")),
