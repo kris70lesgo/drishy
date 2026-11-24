@@ -239,9 +239,29 @@ def summarize_samples(samples: list[dict[str, object]]) -> dict[str, object]:
 
 def atomic_write(path: Path, report: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
-    temporary.replace(path)
+    samples_path = path.with_suffix(".samples.jsonl")
+    report_temporary = path.with_suffix(path.suffix + ".tmp")
+    samples_temporary = samples_path.with_suffix(samples_path.suffix + ".tmp")
+
+    stored_report = dict(report)
+    stored_runs = []
+    sample_lines = []
+    for run in report["runs"]:
+        run_record = {key: value for key, value in run.items() if key != "samples"}
+        run_record["sample_count"] = len(run["samples"])
+        stored_runs.append(run_record)
+        sample_lines.extend(
+            json.dumps(sample, separators=(",", ":"), ensure_ascii=False)
+            for sample in run["samples"]
+        )
+    stored_report["runs"] = stored_runs
+    stored_report["raw_samples_file"] = samples_path.name
+    stored_report["raw_sample_count"] = len(sample_lines)
+
+    samples_temporary.write_text("\n".join(sample_lines) + "\n", encoding="utf-8")
+    report_temporary.write_text(json.dumps(stored_report, indent=2) + "\n", encoding="utf-8")
+    samples_temporary.replace(samples_path)
+    report_temporary.replace(path)
 
 
 def main() -> int:
