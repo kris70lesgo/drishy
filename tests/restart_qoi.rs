@@ -113,6 +113,26 @@ fn restart_stream_rejects_bad_headers_directories_and_payloads() {
     );
 }
 
+#[test]
+fn restart_encoder_parallel_blocks_are_stable_and_pixel_exact() {
+    let header = decode::Header {
+        width: 1024,
+        height: 256,
+        channels: 3,
+        colorspace: 0,
+    };
+    let pixels: Vec<u8> = (0..header.byte_count().unwrap())
+        .map(|value| value.wrapping_mul(37).wrapping_add(value >> 5) as u8)
+        .collect();
+
+    assert!(header.pixel_count().unwrap() >= restart_qoi::PARALLEL_ENCODE_MIN_PIXELS);
+    let first = restart_qoi::encode(header, &pixels).unwrap();
+    let second = restart_qoi::encode(header, &pixels).unwrap();
+    assert_eq!(first, second, "parallel block order must be deterministic");
+    assert_eq!(restart_qoi::decode(&first).unwrap().1, pixels);
+    assert_restart_payloads_are_valid_qoi(&first, &pixels, header);
+}
+
 fn assert_restart_payloads_are_valid_qoi(stream: &[u8], expected: &[u8], header: decode::Header) {
     let block_pixels = u32::from_le_bytes(stream[14..18].try_into().unwrap()) as usize;
     let block_count = u32::from_le_bytes(stream[18..22].try_into().unwrap()) as usize;

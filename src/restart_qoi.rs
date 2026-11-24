@@ -14,6 +14,9 @@ const MAX_BLOCK_COUNT: usize = 1_000_000;
 /// Minimum pixel count before decoding restart blocks in parallel.
 pub const PARALLEL_MIN_PIXELS: usize = 65_536;
 
+/// Minimum pixel count before encoding restart blocks in parallel.
+pub const PARALLEL_ENCODE_MIN_PIXELS: usize = 262_144;
+
 /// Default number of row-major pixels in each independently decodable block.
 pub const DEFAULT_BLOCK_PIXELS: usize = 16_384;
 
@@ -58,31 +61,11 @@ pub fn encode_with_block_pixels(
         return Err(QoiError::InvalidData("too many restart blocks"));
     }
 
-    let mut blocks = Vec::with_capacity(block_count);
-    for pixels in pixels.chunks(block_bytes) {
-        let count = pixels.len() / usize::from(header.channels);
-        let block_header = Header {
-            width: u32::try_from(count).map_err(|_| QoiError::ImageTooLarge)?,
-            height: 1,
-            channels: header.channels,
-            colorspace: header.colorspace,
-        };
-        let mut payload = Vec::with_capacity(pixels.len() + pixels.len() / 2 + 1);
-        crate::encode::encode_payload(block_header, pixels, &mut payload)?;
-        blocks.push(payload);
-    }
-
     let directory_size = block_count.checked_mul(4).ok_or(QoiError::ImageTooLarge)?;
-    let payload_size = blocks.iter().try_fold(0_usize, |total, block| {
-        total
-            .checked_add(block.len())
-            .ok_or(QoiError::ImageTooLarge)
-    })?;
-    let capacity = FILE_HEADER_SIZE
+    let prefix_size = FILE_HEADER_SIZE
         .checked_add(directory_size)
-        .and_then(|size| size.checked_add(payload_size))
         .ok_or(QoiError::ImageTooLarge)?;
-    let mut output = Vec::with_capacity(capacity);
+    let mut output = Vec::with_capacity(prefix_size);
     output.extend_from_slice(MAGIC);
     output.extend_from_slice(&header.width.to_le_bytes());
     output.extend_from_slice(&header.height.to_le_bytes());
@@ -90,15 +73,100 @@ pub fn encode_with_block_pixels(
     output.push(header.colorspace);
     output.extend_from_slice(&(block_pixels as u32).to_le_bytes());
     output.extend_from_slice(&(block_count as u32).to_le_bytes());
-    for block in &blocks {
-        let length = u32::try_from(block.len())
-            .map_err(|_| QoiError::InvalidData("restart block is too large"))?;
-        output.extend_from_slice(&length.to_le_bytes());
-    }
-    for block in blocks {
-        output.extend_from_slice(&block);
+    output.resize(prefix_size, 0);
+
+    // Reuse one bounded scratch area instead of allocating a temporary Vec for
+    // every block. The length directory lets us append the finished blocks in
+    // order after each batch has encoded in parallel.
+    const MAX_BATCH_BLOCKS: usize = 64;
+    let batch_blocks = block_count.min(MAX_BATCH_BLOCKS);
+    let slot_size = block_bytes
+        .checked_add(block_pixels)
+        .ok_or(QoiError::ImageTooLarge)?;
+    let scratch_size = batch_blocks
+        .checked_mul(slot_size)
+        .ok_or(QoiError::ImageTooLarge)?;
+    let mut scratch = vec![0; scratch_size];
+    let parallel = total_pixels >= PARALLEL_ENCODE_MIN_PIXELS && block_count > 1;
+
+    for first_block in (0..block_count).step_by(MAX_BATCH_BLOCKS) {
+        let count = (block_count - first_block).min(MAX_BATCH_BLOCKS);
+        let first_pixel = first_block
+            .checked_mul(block_pixels)
+            .ok_or(QoiError::ImageTooLarge)?;
+        let first_byte = first_pixel
+            .checked_mul(usize::from(header.channels))
+            .ok_or(QoiError::ImageTooLarge)?;
+        let input_batch_bytes = count
+            .checked_mul(block_bytes)
+            .ok_or(QoiError::ImageTooLarge)?;
+        let end_byte = first_byte + input_batch_bytes.min(pixels.len() - first_byte);
+        let input_batch = &pixels[first_byte..end_byte];
+        let scratch_batch_size = count
+            .checked_mul(slot_size)
+            .ok_or(QoiError::ImageTooLarge)?;
+        let scratch_batch = &mut scratch[..scratch_batch_size];
+
+        let lengths: Vec<usize> = if parallel {
+            scratch_batch
+                .par_chunks_mut(slot_size)
+                .zip(input_batch.par_chunks(block_bytes))
+                .map(|(slot, block)| {
+                    let block_header = block_header(header, block)?;
+                    crate::encode::encode_payload_into(block_header, block, slot)
+                })
+                .collect::<Result<_, _>>()?
+        } else {
+            scratch_batch
+                .chunks_mut(slot_size)
+                .zip(input_batch.chunks(block_bytes))
+                .map(|(slot, block)| {
+                    let block_header = block_header(header, block)?;
+                    crate::encode::encode_payload_into(block_header, block, slot)
+                })
+                .collect::<Result<_, _>>()?
+        };
+
+        if first_block == 0 {
+            // Use the already-encoded first batch as a sample to reserve close
+            // to the final compressed size without running the encoder twice.
+            let sample_payload = lengths.iter().try_fold(0_usize, |sum, length| {
+                sum.checked_add(*length).ok_or(QoiError::ImageTooLarge)
+            })?;
+            let sample_pixels = input_batch.len() / usize::from(header.channels);
+            let estimated_payload = usize::try_from(
+                (sample_payload as u128 * total_pixels as u128) / sample_pixels as u128,
+            )
+            .map_err(|_| QoiError::ImageTooLarge)?;
+            let reserve = estimated_payload
+                .checked_add(estimated_payload / 8)
+                .ok_or(QoiError::ImageTooLarge)?;
+            output.reserve(reserve);
+        }
+
+        for (local_block, (&length, slot)) in lengths
+            .iter()
+            .zip(scratch_batch.chunks(slot_size))
+            .enumerate()
+        {
+            let length_u32 = u32::try_from(length)
+                .map_err(|_| QoiError::InvalidData("restart block is too large"))?;
+            let directory_entry = FILE_HEADER_SIZE + (first_block + local_block) * 4;
+            output[directory_entry..directory_entry + 4].copy_from_slice(&length_u32.to_le_bytes());
+            output.extend_from_slice(&slot[..length]);
+        }
     }
     Ok(output)
+}
+
+fn block_header(header: Header, pixels: &[u8]) -> Result<Header, QoiError> {
+    let count = pixels.len() / usize::from(header.channels);
+    Ok(Header {
+        width: u32::try_from(count).map_err(|_| QoiError::ImageTooLarge)?,
+        height: 1,
+        channels: header.channels,
+        colorspace: header.colorspace,
+    })
 }
 
 /// Encodes a tightly packed RGB or RGBA image into the restart-block format.

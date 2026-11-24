@@ -30,6 +30,74 @@ pub(crate) fn encode_payload(
     pixels: &[u8],
     output: &mut Vec<u8>,
 ) -> Result<(), QoiError> {
+    encode_payload_to(header, pixels, output)
+}
+
+pub(crate) fn encode_payload_into(
+    header: Header,
+    pixels: &[u8],
+    output: &mut [u8],
+) -> Result<usize, QoiError> {
+    let mut writer = SliceWriter { output, written: 0 };
+    encode_payload_to(header, pixels, &mut writer)?;
+    Ok(writer.written)
+}
+
+trait QoiOutput {
+    fn push_byte(&mut self, byte: u8) -> Result<(), QoiError>;
+    fn push_bytes(&mut self, bytes: &[u8]) -> Result<(), QoiError>;
+}
+
+impl QoiOutput for Vec<u8> {
+    #[inline]
+    fn push_byte(&mut self, byte: u8) -> Result<(), QoiError> {
+        self.push(byte);
+        Ok(())
+    }
+
+    #[inline]
+    fn push_bytes(&mut self, bytes: &[u8]) -> Result<(), QoiError> {
+        self.extend_from_slice(bytes);
+        Ok(())
+    }
+}
+
+struct SliceWriter<'a> {
+    output: &'a mut [u8],
+    written: usize,
+}
+
+impl QoiOutput for SliceWriter<'_> {
+    #[inline]
+    fn push_byte(&mut self, byte: u8) -> Result<(), QoiError> {
+        let Some(slot) = self.output.get_mut(self.written) else {
+            return Err(QoiError::InvalidData("restart block output is too small"));
+        };
+        *slot = byte;
+        self.written += 1;
+        Ok(())
+    }
+
+    #[inline]
+    fn push_bytes(&mut self, bytes: &[u8]) -> Result<(), QoiError> {
+        let end = self
+            .written
+            .checked_add(bytes.len())
+            .ok_or(QoiError::ImageTooLarge)?;
+        let Some(destination) = self.output.get_mut(self.written..end) else {
+            return Err(QoiError::InvalidData("restart block output is too small"));
+        };
+        destination.copy_from_slice(bytes);
+        self.written = end;
+        Ok(())
+    }
+}
+
+fn encode_payload_to<W: QoiOutput>(
+    header: Header,
+    pixels: &[u8],
+    output: &mut W,
+) -> Result<(), QoiError> {
     if pixels.len() != header.byte_count()? {
         return Err(QoiError::PixelBufferSize);
     }
@@ -46,20 +114,20 @@ pub(crate) fn encode_payload(
         if current == previous {
             run += 1;
             if run == 62 || pixel_number + 1 == total_pixels {
-                output.push(0xc0 | (run - 1));
+                output.push_byte(0xc0 | (run - 1))?;
                 run = 0;
             }
             continue;
         }
 
         if run != 0 {
-            output.push(0xc0 | (run - 1));
+            output.push_byte(0xc0 | (run - 1))?;
             run = 0;
         }
 
         let slot = current.hash();
         if index[slot] == current {
-            output.push(slot as u8);
+            output.push_byte(slot as u8)?;
         } else {
             index[slot] = current;
             if current.0[3] == previous.0[3] {
@@ -70,31 +138,31 @@ pub(crate) fn encode_payload(
                 let blue_green = blue - green;
                 if (-2..=1).contains(&red) && (-2..=1).contains(&green) && (-2..=1).contains(&blue)
                 {
-                    output.push(
+                    output.push_byte(
                         0x40 | (((red + 2) as u8) << 4)
                             | (((green + 2) as u8) << 2)
                             | (blue + 2) as u8,
-                    );
+                    )?;
                 } else if (-32..=31).contains(&green)
                     && (-8..=7).contains(&red_green)
                     && (-8..=7).contains(&blue_green)
                 {
-                    output.push(0x80 | (green + 32) as u8);
-                    output.push(((red_green + 8) as u8) << 4 | (blue_green + 8) as u8);
+                    output.push_byte(0x80 | (green + 32) as u8)?;
+                    output.push_byte(((red_green + 8) as u8) << 4 | (blue_green + 8) as u8)?;
                 } else {
-                    output.push(0xfe);
-                    output.extend_from_slice(&current.0[..3]);
+                    output.push_byte(0xfe)?;
+                    output.push_bytes(&current.0[..3])?;
                 }
             } else {
-                output.push(0xff);
-                output.extend_from_slice(&current.0);
+                output.push_byte(0xff)?;
+                output.push_bytes(&current.0)?;
             }
         }
         previous = current;
     }
 
     if run != 0 {
-        output.push(0xc0 | (run - 1));
+        output.push_byte(0xc0 | (run - 1))?;
     }
     Ok(())
 }
