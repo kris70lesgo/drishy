@@ -164,6 +164,24 @@ fn index_sidecar_round_trips() {
     assert_eq!(parallel::decode_indexed(&qoi, &restored).unwrap().1, pixels);
 }
 
+#[test]
+fn index_rejects_unreasonably_large_checkpoint_counts() {
+    let mut sidecar = Vec::from(&b"DRSHYIDX"[..]);
+    sidecar.extend_from_slice(&1_u32.to_le_bytes());
+    sidecar.extend_from_slice(&0_u64.to_le_bytes());
+    sidecar.extend_from_slice(&0_u64.to_le_bytes());
+    sidecar.extend_from_slice(&1_025_u32.to_le_bytes());
+    assert_eq!(
+        DecodeIndex::read_from(sidecar.as_slice())
+            .unwrap_err()
+            .kind(),
+        std::io::ErrorKind::InvalidData
+    );
+
+    let qoi = encode::encode_rgb_or_rgba(1, 1, 3, &[1, 2, 3]).unwrap();
+    assert!(DecodeIndex::build(&qoi, 1_025).is_err());
+}
+
 fn next_random(state: &mut u64) -> u8 {
     *state ^= *state << 13;
     *state ^= *state >> 7;

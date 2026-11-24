@@ -23,6 +23,21 @@ The `.qoi` commands read and write the standard QOI format. The `.drq` commands 
 cargo test
 ```
 
+## Fuzz decoder inputs
+
+Install `cargo-fuzz` once, then run either bounded decoder target with Rust nightly:
+
+```sh
+cargo install cargo-fuzz
+mkdir -p fuzz/corpus/qoi_decode fuzz/corpus/restart_decode
+cp -R fuzz/seed-corpus/qoi/. fuzz/corpus/qoi_decode/
+cp -R fuzz/seed-corpus/restart/. fuzz/corpus/restart_decode/
+cargo +nightly fuzz run qoi_decode -- -max_total_time=60
+cargo +nightly fuzz run restart_decode -- -max_total_time=60
+```
+
+The targets cover malformed files and mutate valid small streams to reach deeper opcode handling. They cap input and decoded image sizes so fuzzing does not allocate large image buffers.
+
 ## Benchmark
 
 ```sh

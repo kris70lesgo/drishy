@@ -3,6 +3,7 @@ use std::io::{self, Read, Write};
 
 const INDEX_MAGIC: &[u8; 8] = b"DRSHYIDX";
 const INDEX_VERSION: u32 = 1;
+const MAX_CHECKPOINTS: usize = 1_024;
 
 #[derive(Debug, Clone)]
 pub struct DecodeIndex {
@@ -16,6 +17,9 @@ impl DecodeIndex {
         let header = read_header(qoi)?;
         if workers == 0 {
             return Err(QoiError::InvalidData("worker count must be at least one"));
+        }
+        if workers > MAX_CHECKPOINTS {
+            return Err(QoiError::InvalidData("too many decode workers"));
         }
         if qoi.len() < 22 || qoi[qoi.len() - 8..] != crate::decode::END_MARKER {
             return Err(QoiError::InvalidData("missing valid QOI end marker"));
@@ -99,7 +103,7 @@ impl DecodeIndex {
         let file_size = read_u64(&mut reader)?;
         let fingerprint = read_u64(&mut reader)?;
         let count = read_u32(&mut reader)? as usize;
-        if count == 0 || count > 1_000_000 {
+        if count == 0 || count > MAX_CHECKPOINTS {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "invalid checkpoint count",
