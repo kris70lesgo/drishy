@@ -24,6 +24,19 @@ struct Timing {
     median: Duration,
     fastest: Duration,
     slowest: Duration,
+    samples: [RawSample; 5],
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct RawSample {
+    elapsed: Duration,
+    repeats: usize,
+}
+
+impl RawSample {
+    fn per_pass(self) -> Duration {
+        Duration::from_secs_f64(self.elapsed.as_secs_f64() / self.repeats as f64)
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -189,17 +202,10 @@ fn time_reused_pass(images: &[&Image], decoder: Decoder, output: &mut [u8]) -> D
 }
 
 fn summarize(
-    samples: [Vec<Duration>; 4],
+    samples: [Vec<RawSample>; 4],
     paired_speedups: [Vec<f64>; 2],
 ) -> ([Timing; 4], [[f64; 3]; 2]) {
-    let timings = samples.map(|mut samples| {
-        samples.sort_by_key(Duration::as_nanos);
-        Timing {
-            median: samples[2],
-            fastest: samples[0],
-            slowest: samples[4],
-        }
-    });
+    let timings = samples.map(summarize_timing);
     let speedup_summary = paired_speedups.map(|mut speedups| {
         speedups.sort_by(f64::total_cmp);
         [speedups[2], speedups[0], speedups[4]]
@@ -207,10 +213,26 @@ fn summarize(
     (timings, speedup_summary)
 }
 
+fn summarize_timing(samples: Vec<RawSample>) -> Timing {
+    let samples: [RawSample; 5] = samples
+        .try_into()
+        .expect("each benchmark has exactly five samples");
+    let mut per_pass = samples.map(RawSample::per_pass);
+    per_pass.sort_by_key(Duration::as_nanos);
+    Timing {
+        median: per_pass[2],
+        fastest: per_pass[0],
+        slowest: per_pass[4],
+        samples,
+    }
+}
+
 fn measure(
     images: &[&Image],
     decoders: [Decoder; 4],
     target_sample_seconds: f64,
+    raw_samples: bool,
+    group: &str,
 ) -> ([Timing; 4], [[f64; 3]; 2]) {
     for decoder in decoders {
         for image in images {
@@ -228,7 +250,7 @@ fn measure(
         [3, 0, 1, 2],
         [0, 2, 1, 3],
     ];
-    let mut samples: [Vec<Duration>; 4] = std::array::from_fn(|_| Vec::with_capacity(5));
+    let mut samples: [Vec<RawSample>; 4] = std::array::from_fn(|_| Vec::with_capacity(5));
     let mut paired_speedups: [Vec<f64>; 2] = std::array::from_fn(|_| Vec::with_capacity(5));
     for order in orders {
         let mut round_times = [Duration::ZERO; 4];
@@ -239,18 +261,36 @@ fn measure(
                     decode(image, decoders[decoder_index]);
                 }
             }
-            let per_pass = start.elapsed().as_secs_f64() / repeats[decoder_index] as f64;
-            let normalized = Duration::from_secs_f64(per_pass);
-            samples[decoder_index].push(normalized);
+            let sample = RawSample {
+                elapsed: start.elapsed(),
+                repeats: repeats[decoder_index],
+            };
+            let normalized = sample.per_pass();
+            samples[decoder_index].push(sample);
             round_times[decoder_index] = normalized;
         }
         paired_speedups[0].push(round_times[0].as_secs_f64() / round_times[2].as_secs_f64());
         paired_speedups[1].push(round_times[3].as_secs_f64() / round_times[2].as_secs_f64());
     }
-    summarize(samples, paired_speedups)
+    let (timings, speedups) = summarize(samples, paired_speedups);
+    for (decoder, timing) in decoders.into_iter().zip(timings) {
+        emit_sample_rows(
+            raw_samples,
+            "decode_allocating",
+            group,
+            decoder.name(),
+            &timing.samples,
+            images.iter().map(|image| image.pixels as u64).sum(),
+        );
+    }
+    (timings, speedups)
 }
 
-fn measure_reused(images: &[&Image], decoders: [Decoder; 4]) -> ([Timing; 4], [[f64; 3]; 2]) {
+fn measure_reused(
+    images: &[&Image],
+    decoders: [Decoder; 4],
+    raw_samples: bool,
+) -> ([Timing; 4], [[f64; 3]; 2]) {
     let output_size = images
         .iter()
         .map(|image| image.pixel_bytes)
@@ -275,7 +315,7 @@ fn measure_reused(images: &[&Image], decoders: [Decoder; 4]) -> ([Timing; 4], [[
         [3, 0, 1, 2],
         [0, 2, 1, 3],
     ];
-    let mut samples: [Vec<Duration>; 4] = std::array::from_fn(|_| Vec::with_capacity(5));
+    let mut samples: [Vec<RawSample>; 4] = std::array::from_fn(|_| Vec::with_capacity(5));
     let mut paired_speedups: [Vec<f64>; 2] = std::array::from_fn(|_| Vec::with_capacity(5));
     for order in orders {
         let mut round_times = [Duration::ZERO; 4];
@@ -286,15 +326,63 @@ fn measure_reused(images: &[&Image], decoders: [Decoder; 4]) -> ([Timing; 4], [[
                     decode_reused(image, decoders[decoder_index], &mut output);
                 }
             }
-            let per_pass = start.elapsed().as_secs_f64() / repeats[decoder_index] as f64;
-            let normalized = Duration::from_secs_f64(per_pass);
-            samples[decoder_index].push(normalized);
+            let sample = RawSample {
+                elapsed: start.elapsed(),
+                repeats: repeats[decoder_index],
+            };
+            let normalized = sample.per_pass();
+            samples[decoder_index].push(sample);
             round_times[decoder_index] = normalized;
         }
         paired_speedups[0].push(round_times[0].as_secs_f64() / round_times[2].as_secs_f64());
         paired_speedups[1].push(round_times[3].as_secs_f64() / round_times[2].as_secs_f64());
     }
-    summarize(samples, paired_speedups)
+    let (timings, speedups) = summarize(samples, paired_speedups);
+    let pixels = images.iter().map(|image| image.pixels as u64).sum();
+    for (decoder, timing) in decoders.into_iter().zip(timings) {
+        emit_sample_rows(
+            raw_samples,
+            "decode_reused",
+            "all",
+            decoder.name(),
+            &timing.samples,
+            pixels,
+        );
+    }
+    (timings, speedups)
+}
+
+impl Decoder {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Qoi => "qoi",
+            Self::Drishy => "drishy_qoi",
+            Self::Restart => "drq1",
+            Self::Rapid => "rapid_qoi",
+        }
+    }
+}
+
+fn emit_sample_rows(
+    enabled: bool,
+    mode: &str,
+    group: &str,
+    implementation: &str,
+    samples: &[RawSample],
+    pixels: u64,
+) {
+    if !enabled {
+        return;
+    }
+    for (index, sample) in samples.iter().enumerate() {
+        let rate = pixels as f64 / sample.per_pass().as_secs_f64() / 1e6;
+        println!(
+            "DRISHY_SAMPLE\t{mode}\t{group}\t{implementation}\t{}\t{}\t{}\t{pixels}\t{rate:.6}",
+            index + 1,
+            sample.elapsed.as_nanos(),
+            sample.repeats,
+        );
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -381,7 +469,7 @@ fn measure_encoders(
         let pass = time_encoder_pass(images, encoder, block_pixels)?.as_secs_f64();
         repeats[index] = (target_sample_seconds / pass).ceil().max(1.0) as usize;
     }
-    let mut samples: [Vec<Duration>; 3] = std::array::from_fn(|_| Vec::with_capacity(5));
+    let mut samples: [Vec<RawSample>; 3] = std::array::from_fn(|_| Vec::with_capacity(5));
     let mut sizes = [0_u64; 3];
 
     // Decode each input once per round, then rotate encoder order per round to reduce order bias.
@@ -405,25 +493,18 @@ fn measure_encoders(
             }
         }
         for encoder_index in 0..3 {
-            let normalized = Duration::from_secs_f64(
-                round_times[encoder_index].as_secs_f64() / repeats[encoder_index] as f64,
-            );
-            samples[encoder_index].push(normalized);
+            samples[encoder_index].push(RawSample {
+                elapsed: round_times[encoder_index],
+                repeats: repeats[encoder_index],
+            });
         }
     }
 
-    let timings = samples.map(|mut values| {
-        values.sort_by_key(Duration::as_nanos);
-        Timing {
-            median: values[2],
-            fastest: values[0],
-            slowest: values[4],
-        }
-    });
+    let timings = samples.map(summarize_timing);
     Ok((timings, sizes))
 }
 
-fn report_size_bands(images: &[&Image]) {
+fn report_size_bands(images: &[&Image], raw_samples: bool) {
     let bands = [
         ("small (<65,536 px)", 0, 65_536),
         ("medium (65,536–1,048,575 px)", 65_536, 1_048_576),
@@ -436,7 +517,11 @@ fn report_size_bands(images: &[&Image]) {
         Decoder::Rapid,
     ];
     println!("Decode speed by image size (fresh output allocation):");
-    for (label, min_pixels, max_pixels) in bands {
+    for (group_name, label, min_pixels, max_pixels) in [
+        ("small", bands[0].0, bands[0].1, bands[0].2),
+        ("medium", bands[1].0, bands[1].1, bands[1].2),
+        ("large", bands[2].0, bands[2].1, bands[2].2),
+    ] {
         let group: Vec<&Image> = images
             .iter()
             .copied()
@@ -447,7 +532,7 @@ fn report_size_bands(images: &[&Image]) {
             continue;
         }
         let group_pixels: u64 = group.iter().map(|image| image.pixels as u64).sum();
-        let (times, _) = measure(&group, decoders, 0.75);
+        let (times, _) = measure(&group, decoders, 0.75, raw_samples, group_name);
         let rates = times.map(|time| group_pixels as f64 / time.median.as_secs_f64() / 1e6);
         println!(
             "  {label}: {} images, {:.1} Mpix; qoi {:.0}, Drishy QOI {:.0}, rapid-qoi {:.0}, DRQ1 {:.0} Mpix/s ({:.2}x vs qoi, {:.2}x vs rapid-qoi)",
@@ -463,7 +548,7 @@ fn report_size_bands(images: &[&Image]) {
     }
 }
 
-fn report_slowest_large_images(images: &[&Image]) {
+fn report_slowest_large_images(images: &[&Image], raw_samples: bool) {
     let mut slow_cases = Vec::new();
     for (image_index, image) in images
         .iter()
@@ -485,8 +570,11 @@ fn report_slowest_large_images(images: &[&Image]) {
         let restart_repeats = (target_sample_seconds / restart_calibration)
             .ceil()
             .max(1.0) as usize;
-        let mut qoi_samples = [Duration::ZERO; 3];
-        let mut restart_samples = [Duration::ZERO; 3];
+        let mut qoi_samples = [RawSample {
+            elapsed: Duration::ZERO,
+            repeats: 1,
+        }; 3];
+        let mut restart_samples = qoi_samples;
         for round in 0..3 {
             let order = if (image_index + round) % 2 == 0 {
                 [Decoder::Qoi, Decoder::Restart]
@@ -503,8 +591,10 @@ fn report_slowest_large_images(images: &[&Image]) {
                 for _ in 0..repeats {
                     decode(image, decoder);
                 }
-                let sample =
-                    Duration::from_secs_f64(start.elapsed().as_secs_f64() / repeats as f64);
+                let sample = RawSample {
+                    elapsed: start.elapsed(),
+                    repeats,
+                };
                 match decoder {
                     Decoder::Qoi => qoi_samples[round] = sample,
                     Decoder::Restart => restart_samples[round] = sample,
@@ -512,10 +602,34 @@ fn report_slowest_large_images(images: &[&Image]) {
                 }
             }
         }
-        qoi_samples.sort_by_key(Duration::as_nanos);
-        restart_samples.sort_by_key(Duration::as_nanos);
-        let qoi_time = qoi_samples[1].as_secs_f64();
-        let restart_time = restart_samples[1].as_secs_f64();
+        let mut qoi_per_pass = qoi_samples.map(RawSample::per_pass);
+        let mut restart_per_pass = restart_samples.map(RawSample::per_pass);
+        qoi_per_pass.sort_by_key(Duration::as_nanos);
+        restart_per_pass.sort_by_key(Duration::as_nanos);
+        let qoi_time = qoi_per_pass[1].as_secs_f64();
+        let restart_time = restart_per_pass[1].as_secs_f64();
+        let case_name = image
+            .path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .replace(['\t', '\n', '\r'], "_");
+        emit_sample_rows(
+            raw_samples,
+            "decode_slowest_large",
+            &case_name,
+            "qoi",
+            &qoi_samples,
+            image.pixels as u64,
+        );
+        emit_sample_rows(
+            raw_samples,
+            "decode_slowest_large",
+            &case_name,
+            "drq1",
+            &restart_samples,
+            image.pixels as u64,
+        );
         slow_cases.push((
             qoi_time / restart_time,
             image,
@@ -543,8 +657,19 @@ fn report_encoders(
     images: &[&Image],
     pixels: u64,
     block_pixels: usize,
+    raw_samples: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let (times, sizes) = measure_encoders(images, block_pixels)?;
+    for (encoder, timing) in ENCODERS.into_iter().zip(times) {
+        emit_sample_rows(
+            raw_samples,
+            "encode",
+            "all",
+            encoder.name(),
+            &timing.samples,
+            pixels,
+        );
+    }
     let rates = times.map(|time| pixels as f64 / time.median.as_secs_f64() / 1e6);
     let bounds = times.map(|time| {
         (
@@ -578,11 +703,22 @@ fn report_encoders(
     Ok(())
 }
 
+impl Encoder {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Qoi => "qoi",
+            Self::Drishy => "drishy_qoi",
+            Self::Restart => "drq1",
+        }
+    }
+}
+
 fn benchmark(
     path: &Path,
     block_pixels: usize,
     encoding_only: bool,
     slow_cases_only: bool,
+    raw_samples: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut paths = Vec::new();
     collect_paths(path, &mut paths)?;
@@ -624,6 +760,7 @@ fn benchmark(
         pixels as f64 / 1e9,
         block_pixels
     );
+    println!("Rayon worker threads: {}", rayon::current_num_threads());
     println!(
         "Parallel path: {} of {} images ({:.1}% of pixels); the remaining pixels use the serial path",
         parallel_eligible,
@@ -644,10 +781,10 @@ fn benchmark(
 
     let image_refs: Vec<&Image> = images.iter().collect();
     if encoding_only {
-        return report_encoders(&image_refs, pixels, block_pixels);
+        return report_encoders(&image_refs, pixels, block_pixels, raw_samples);
     }
     if slow_cases_only {
-        report_slowest_large_images(&image_refs);
+        report_slowest_large_images(&image_refs, raw_samples);
         return Ok(());
     }
 
@@ -699,7 +836,7 @@ fn benchmark(
         Decoder::Restart,
         Decoder::Rapid,
     ];
-    let (times, speedups) = measure(&image_refs, decoders, 2.0);
+    let (times, speedups) = measure(&image_refs, decoders, 2.0, raw_samples, "all");
     let rates = times.map(|time| pixels as f64 / time.median.as_secs_f64() / 1e6);
     let bounds = times.map(|time| {
         (
@@ -736,10 +873,10 @@ fn benchmark(
     println!(
         "Timing: five paired rounds of at least two seconds per decoder; input bytes are in memory."
     );
-    report_size_bands(&image_refs);
-    report_slowest_large_images(&image_refs);
+    report_size_bands(&image_refs, raw_samples);
+    report_slowest_large_images(&image_refs, raw_samples);
 
-    let (reused_times, reused_speedups) = measure_reused(&image_refs, decoders);
+    let (reused_times, reused_speedups) = measure_reused(&image_refs, decoders, raw_samples);
     let reused_rates = reused_times.map(|time| pixels as f64 / time.median.as_secs_f64() / 1e6);
     println!(
         "Reused buffers: qoi {:.0}, Drishy standard {:.0}, rapid-qoi {:.0}, restart {:.0} Mpix/s; restart vs qoi {:.2}x (paired {:.2}x, {:.2}–{:.2}); vs rapid-qoi {:.2}x (paired {:.2}x, {:.2}–{:.2})",
@@ -759,7 +896,7 @@ fn benchmark(
     println!(
         "Reusable-buffer timing: five paired rounds of at least two seconds per decoder; one output buffer is reused across all images."
     );
-    report_encoders(&image_refs, pixels, block_pixels)?;
+    report_encoders(&image_refs, pixels, block_pixels, raw_samples)?;
     Ok(())
 }
 
@@ -767,13 +904,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let raw_args: Vec<_> = env::args_os().skip(1).collect();
     let encoding_only = raw_args.iter().any(|arg| arg == "--encoding-only");
     let slow_cases_only = raw_args.iter().any(|arg| arg == "--slow-cases-only");
+    let raw_samples = raw_args.iter().any(|arg| arg == "--raw-samples");
     let args: Vec<_> = raw_args
         .into_iter()
-        .filter(|arg| arg != "--bench" && arg != "--encoding-only" && arg != "--slow-cases-only")
+        .filter(|arg| {
+            arg != "--bench"
+                && arg != "--encoding-only"
+                && arg != "--slow-cases-only"
+                && arg != "--raw-samples"
+        })
         .collect();
     if args.is_empty() {
         eprintln!(
-            "Usage: cargo bench --bench restart_qoi -- <image.qoi|image.png|corpus-directory> [block-pixels] [--encoding-only|--slow-cases-only]"
+            "Usage: cargo bench --bench restart_qoi -- <image.qoi|image.png|corpus-directory> [block-pixels] [--encoding-only|--slow-cases-only] [--raw-samples]"
         );
         std::process::exit(2);
     }
@@ -787,5 +930,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         block_pixels,
         encoding_only,
         slow_cases_only,
+        raw_samples,
     )
 }

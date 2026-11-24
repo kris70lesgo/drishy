@@ -39,6 +39,7 @@ Working notes, not the blog draft. Keep the story honest as the design and resul
 - The parallel encoder's dedicated test checks repeatable output and exact decoded pixels for a multi-block image; the full 2,848-image benchmark also cross-checked every current DRQ1 output before timing.
 - This is evidence on two corpora on one Apple M5, not a promise for every image or CPU. We have not measured another computer, disk-to-display latency, or isolated single-decode peak RSS.
 - The archive-count caveat remains: the current [QOI benchmark page](https://qoiformat.org/benchmark/) says 2,879 images; the downloaded archive contains 2,848 PNGs. The results are for the 2,848 local PNGs only.
+- Added `scripts/repeat_benchmark.py` to save independent repeats as JSON. Each run includes every timed sample's elapsed nanoseconds and repeat count, plus the source commit, working-tree status, machine and Rust details, Rayon thread count, and a SHA-256 fingerprint over the sorted corpus paths and contents. For future comparisons, use the same mode, block size, thread count, power connection, and corpus fingerprint; let the machine cool between long runs if temperatures are affecting results.
 
 ## Research links
 

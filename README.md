@@ -38,6 +38,15 @@ The corpus run checks decoded pixels against two independent Rust decoders, then
 
 The restart-block benchmark checks decoded outputs against independent QOI decoders, reports compressed sizes, times first decodes, and compares five paired rounds with observed ranges. It reports both fresh output allocation and a reused output buffer. Its optional final argument selects the block size in pixels; the default is 16,384. Timings decode in-memory bytes and include block-directory parsing, output allocation, and parallel scheduling; file reads and PNG conversion are outside the timed region.
 
+### Repeatable benchmark report
+
+```sh
+python3 scripts/repeat_benchmark.py /path/to/qoi_benchmark_suite --runs 3 --threads 10
+python3 scripts/repeat_benchmark.py /path/to/qoi_benchmark_suite --mode encode --runs 3 --threads 10
+```
+
+The runner saves a JSON report under `benchmark-results/` with every raw sample, per-run summaries, the source commit and working-tree state, OS/CPU/Rust details, Rayon thread count, and a SHA-256 fingerprint of the sorted corpus paths and file contents. `--mode encode` isolates encoder timing; `--mode full` also measures decoding. Connect power and close CPU-heavy apps before a series, and keep the power mode and thread count the same across repeats. The benchmark prints raw rows directly with `--raw-samples` if you want to run it without the report script.
+
 ### Current result (2026-11-24)
 
 On an Apple M5 with 10 CPU cores, the latest full run over 2,848 PNGs (1.322 billion pixels) measured **1,481 Mpix/s** for DRQ1, **402** for `qoi`, and **420** for `rapid-qoi`: **3.68×** and **3.53×**. The five paired rounds ranged 3.35×–3.89× vs `qoi` and 3.18×–3.64× vs `rapid-qoi`. By image size, DRQ1 was **0.98×** as fast on small images, **2.84×** on medium images, and **4.18×** on large images vs `qoi`. With a reused output buffer, it reached **1,532 Mpix/s** (3.51× vs `qoi`). DRQ1 output was **100.1%** of QOI size, and parallel decoding covered 99.3% of suite pixels.
