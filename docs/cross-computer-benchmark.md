@@ -1,15 +1,34 @@
-# Friend's laptop benchmark steps
+# Cross-computer benchmark
 
-This run checks whether Drishy's speedup carries over to another laptop. The two runs took about 13.5 minutes on the M5 reference; allow longer on a slower laptop. Please run it while plugged in, with CPU-heavy apps closed.
+The cross-computer validation is complete on a Dell G15 5530. This guide records the completed thread sweep and keeps the steps for reproducing it on another machine. The benchmark times decoding in memory, so it measures codec throughput rather than disk-to-display latency.
 
-## What Agastya needs to provide
+## Completed Dell G15 5530 sweep
+
+The friend confirmed the machine as a Dell G15 5530 with a 13th Gen Intel Core i9-13900HX. PowerShell reported 24 cores and 32 logical processors; the JSON itself records a generic Intel CPU identifier, Windows 10, and Rust 1.93.0. All four reports use commit `373166e3d8e90251b532cbdf1f9a7b3552771e1f` and the matching 2,848-file corpus fingerprint `1c25bfa55fb2a542d29dd4a69584deb5e2eda755d13642ef6d18c9498ea493b7`. Each thread setting has two successful external runs and 10 paired samples.
+
+| Rayon threads | Fresh-output decode vs `qoi` | Reused-buffer decode vs `qoi` | DRQ1 encode vs `qoi` |
+| ---: | ---: | ---: | ---: |
+| 8 | 3.27× | 4.39× | 1.73× |
+| 16 | 3.24× | 5.46× | 1.87× |
+| 24 | 3.06× | 6.18× | 1.87× |
+| 32 | 2.91× | 6.33× | 1.87× |
+
+These are medians of paired samples, not guarantees for every file or computer. Fresh-output decoding peaked at 8 threads for this corpus and machine. Reused-buffer decoding was fastest at 32, though it gained only about 2% over 24. The encoder was essentially flat from 16 to 32. Small images remained slower than `qoi` (about 0.88×) at every thread count; medium and large images were faster.
+
+Run notes report AC power, the Windows Balanced power plan, OneDrive sync paused during the final sweep, and Codex codebase-memory workers active. The Dell thermal setting was unknown. All benchmark processes exited 0; the notes say `cargo test --locked` passed 12 tests. The JSON reports record the expected commit and corpus, but also mark the working tree as not clean without listing changed paths. Treat that as a reproducibility caveat rather than proof that the working tree was clean.
+
+The four JSON reports, four matching raw-sample files, and supplied run notes are preserved in [`../benchmark-results/dell-g15-5530-thread-sweep/`](../benchmark-results/dell-g15-5530-thread-sweep/).
+
+## Reproduce the Dell thread sweep
+
+### Inputs needed on the test computer
 
 - Copy of `qoi_benchmark_suite.tar` (about 1.1 GB). It is stored outside the repository on the M5 Mac. Copy it by AirDrop, an external drive, or another file-transfer method.
 - The receiving laptop needs Git, Python 3, and Rustup. No Docker or GPU is needed.
 
 Do not put the image archive in GitHub. It is too large and is only benchmark data.
 
-## Steps
+### Steps
 
 1. Open Terminal on macOS/Linux, or PowerShell on Windows. Clone the repository and install the benchmark's Rust version:
 
@@ -52,29 +71,27 @@ Do not put the image archive in GitHub. It is too large and is only benchmark da
    rustup override set 1.93.0
    ```
 
-5. Run two complete benchmark processes. Use the laptop's logical-core count for the thread setting. On macOS/Linux, find it and run:
+5. Run two complete benchmark processes at each thread count. For the Dell sweep, use 8, 16, 24, and 32. On macOS/Linux:
 
    ```sh
-   THREADS=$(python3 -c 'import os; print(os.cpu_count())')
-   python3 scripts/repeat_benchmark.py ../drishy-benchmark-data/full-suite --runs 2 --threads "$THREADS"
+   for THREADS in 8 16 24 32; do
+     python3 scripts/repeat_benchmark.py ../drishy-benchmark-data/full-suite --runs 2 --threads "$THREADS"
+   done
    ```
 
    On Windows PowerShell:
 
    ```powershell
-   $threads = py -3 -c "import os; print(os.cpu_count())"
-   py -3 scripts\repeat_benchmark.py ..\drishy-benchmark-data\full-suite --runs 2 --threads $threads
+   foreach ($threads in @(8, 16, 24, 32)) {
+     py -3 scripts\repeat_benchmark.py ..\drishy-benchmark-data\full-suite --runs 2 --threads $threads
+     if ($LASTEXITCODE -ne 0) { throw "Benchmark failed at $threads threads" }
+   }
    ```
 
    Leave the laptop plugged in and avoid other heavy work until both runs finish. The first build and the two benchmark processes may take longer on a slower laptop.
 
-## What to send back
+### Files produced
 
-Send Agastya these two files from the new `benchmark-results` folder:
-
-- The generated `drishy-<timestamp>.json`
-- Its matching `drishy-<timestamp>.samples.jsonl`
-
-Also tell him the laptop model, whether it was plugged in, and whether the benchmark completed normally. The JSON report records the CPU, operating system, Rust version, thread count, source commit, corpus fingerprint, and timing samples. The source commit and fingerprint must match the M5 reference.
+Each invocation saves a JSON report and matching `.samples.jsonl` file under `benchmark-results/`. Keep both for every thread setting. Also record whether the computer was plugged in, its power mode, and whether CPU-heavy background work was running. The source commit and corpus fingerprint must match the M5 reference.
 
 The M5 reference is [`drishy-20261124T155944Z.json`](../benchmark-results/drishy-20261124T155944Z.json): 3.78× median allocating-decode speedup over `qoi` and 3.86× over `rapid-qoi` across 10 paired samples. The official archive page lists 2,879 images, but this archive yields 2,848 benchmark PNGs plus support files; the verification command protects against comparing different image sets.
