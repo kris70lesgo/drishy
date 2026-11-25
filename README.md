@@ -1,6 +1,12 @@
-# Drishy
+<p align="center">
+  <img src="assets/drishy-mark.svg" width="40" height="48" alt="Drishy pixel mark" />
+  &nbsp;&nbsp;
+  <img src="assets/drishy-app-icon.svg" width="48" height="48" alt="Drishy app icon" />
+</p>
 
-**An experimental Rust QOI codec with CPU-parallel decoding.** Drishy reads and writes standard QOI files and provides an experimental restart-block format, DRQ1, that lets CPU workers decode independent blocks in parallel.
+<h1 align="center">Drishy</h1>
+
+<p align="center"><strong>An experimental Rust QOI codec with CPU-parallel decoding.</strong><br />Drishy reads and writes standard QOI files and provides an experimental restart-block format, DRQ1, that lets CPU workers decode independent blocks in parallel.</p>
 
 > Use `.qoi` when you need standard QOI compatibility. `.drq` files use DRQ1 and are not readable by ordinary QOI tools.
 
