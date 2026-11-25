@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 455" role="img" aria-labelledby="title desc">
+  <title id="title">DRQ1 decode speedup over qoi</title>
+  <desc id="desc">Grouped horizontal bars compare fresh-output and reused-buffer decode speedups for the Apple M5 at 10 threads and the Dell G15 5530 at 8, 16, 24, and 32 threads. All values are median paired speedups over qoi.</desc>
+  <rect width="960" height="455" fill="#ffffff"/>
+  <g font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" fill="#1f2937">
+    <text x="40" y="36" font-size="23" font-weight="700">DRQ1 decode speedup over qoi</text>
+    <text x="40" y="59" font-size="13" fill="#4b5563">Median paired speedup; higher is faster</text>
+
+    <rect x="206" y="77" width="14" height="14" rx="2" fill="#2563eb"/>
+    <text x="227" y="89" font-size="13">Fresh output</text>
+    <rect x="356" y="77" width="14" height="14" rx="2" fill="#0f766e"/>
+    <text x="377" y="89" font-size="13">Reused buffer</text>
+
+    <g stroke="#e5e7eb" stroke-width="1">
+      <line x1="205" y1="108" x2="205" y2="372"/>
+      <line x1="299.3" y1="108" x2="299.3" y2="372"/>
+      <line x1="393.6" y1="108" x2="393.6" y2="372"/>
+      <line x1="487.9" y1="108" x2="487.9" y2="372"/>
+      <line x1="582.1" y1="108" x2="582.1" y2="372"/>
+      <line x1="676.4" y1="108" x2="676.4" y2="372"/>
+      <line x1="770.7" y1="108" x2="770.7" y2="372"/>
+      <line x1="865" y1="108" x2="865" y2="372"/>
+    </g>
+    <line x1="299.3" y1="105" x2="299.3" y2="372" stroke="#6b7280" stroke-width="1.5" stroke-dasharray="5 4"/>
+    <text x="307" y="106" font-size="11" fill="#4b5563">1× baseline</text>
+
+    <g font-size="13" fill="#374151" text-anchor="end">
+      <text x="190" y="140">Apple M5 - 10 threads</text>
+      <text x="190" y="190">Dell G15 - 8 threads</text>
+      <text x="190" y="240">Dell G15 - 16 threads</text>
+      <text x="190" y="290">Dell G15 - 24 threads</text>
+      <text x="190" y="340">Dell G15 - 32 threads</text>
+    </g>
+
+    <g fill="#2563eb">
+      <rect x="205" y="119" width="356.6" height="15" rx="3"/>
+      <rect x="205" y="169" width="308.6" height="15" rx="3"/>
+      <rect x="205" y="219" width="305.8" height="15" rx="3"/>
+      <rect x="205" y="269" width="288.6" height="15" rx="3"/>
+      <rect x="205" y="319" width="274.4" height="15" rx="3"/>
+    </g>
+    <g fill="#0f766e">
+      <rect x="205" y="137" width="382.1" height="15" rx="3"/>
+      <rect x="205" y="187" width="414.9" height="15" rx="3"/>
+      <rect x="205" y="237" width="515.1" height="15" rx="3"/>
+      <rect x="205" y="287" width="583.0" height="15" rx="3"/>
+      <rect x="205" y="337" width="597.1" height="15" rx="3"/>
+    </g>
+    <g font-size="12" font-weight="600" fill="#1f2937">
+      <text x="568" y="131">3.78x</text>
+      <text x="594" y="149">4.05x</text>
+      <text x="520" y="181">3.27x</text>
+      <text x="626" y="199">4.39x</text>
+      <text x="518" y="231">3.24x</text>
+      <text x="727" y="249">5.46x</text>
+      <text x="501" y="281">3.06x</text>
+      <text x="795" y="299">6.18x</text>
+      <text x="486" y="331">2.91x</text>
+      <text x="809" y="349">6.33x</text>
+    </g>
+
+    <g font-size="11" fill="#4b5563" text-anchor="middle">
+      <text x="205" y="390">0x</text>
+      <text x="299.3" y="390">1x</text>
+      <text x="393.6" y="390">2x</text>
+      <text x="487.9" y="390">3x</text>
+      <text x="582.1" y="390">4x</text>
+      <text x="676.4" y="390">5x</text>
+      <text x="770.7" y="390">6x</text>
+      <text x="865" y="390">7x</text>
+    </g>
+    <text x="535" y="418" text-anchor="middle" font-size="13" fill="#374151">Speedup vs qoi decoder</text>
+    <text x="40" y="442" font-size="11" fill="#6b7280">In-memory codec throughput | 10 paired timing samples per setting | results vary by image and machine</text>
+  </g>
+</svg>

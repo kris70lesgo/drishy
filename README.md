@@ -104,6 +104,8 @@ Benchmarks compare Drishy with the Rust `qoi` and `rapid-qoi` decoders on the sa
 | Dell G15 5530 / 24 | 3.06× | 6.18× | 1.87× |
 | Dell G15 5530 / 32 | 2.91× | 6.33× | 1.87× |
 
+![Grouped bar chart of Drishy DRQ1 decode speedups over the qoi crate, comparing fresh-output and reused-buffer decoding across the Apple M5 and Dell G15 thread counts.](docs/benchmark-decode-speedup.svg)
+
 The M5 baseline measured 3.86× over `rapid-qoi` for fresh-output decode. On the Dell, the 8-thread result was 3.19× over `rapid-qoi`; at 32 threads it was 2.84×. Small-image decoding was slower than `qoi` (0.96× on the M5 and about 0.88× on the Dell), while medium and large images drove the speedup. DRQ1 output was about 100.1% of QOI size.
 
 These are codec-throughput measurements on in-memory data. They exclude file reading, PNG conversion, and end-to-end application latency; speedups do not apply to every image. The Dell reports match the reference source commit and corpus fingerprint but mark the working tree as dirty without listing the changed paths, so treat them as supporting cross-computer evidence. See the [M5 report](benchmark-results/drishy-20261124T155944Z.json), [Dell sweep and raw samples](benchmark-results/dell-g15-5530-thread-sweep/), and [benchmark reproduction guide](docs/cross-computer-benchmark.md).
