@@ -43,23 +43,23 @@ def git_metadata(output_path: Path) -> dict[str, object]:
     commit = command_output(["git", "rev-parse", "HEAD"])
     branch = command_output(["git", "branch", "--show-current"])
     status = command_output(["git", "status", "--porcelain", "--untracked-files=all"])
-    if status is None:
-        clean = False
-    else:
+    dirty_entries = None
+    if status is not None:
         try:
             report_relative = output_path.relative_to(REPO).as_posix()
+            samples_relative = output_path.with_suffix(".samples.jsonl").relative_to(REPO).as_posix()
         except ValueError:
             report_relative = None
+            samples_relative = None
+        generated_reports = {report_relative, samples_relative}
         dirty_entries = [
-            line
-            for line in status.splitlines()
-            if report_relative is None or line[3:].strip() != report_relative
+            line for line in status.splitlines() if line[3:].strip() not in generated_reports
         ]
-        clean = not dirty_entries
     return {
         "commit": commit,
         "branch": branch,
-        "working_tree_clean_at_start": clean,
+        "working_tree_clean_at_start": dirty_entries == [],
+        "working_tree_status": dirty_entries,
     }
 
 

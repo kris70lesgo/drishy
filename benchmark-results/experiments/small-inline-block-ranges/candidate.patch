@@ -1,0 +1,97 @@
+diff --git a/src/restart_qoi.rs b/src/restart_qoi.rs
+index c905475..fab9730 100644
+--- a/src/restart_qoi.rs
++++ b/src/restart_qoi.rs
+@@ -13,0 +14 @@ const MAX_BLOCK_COUNT: usize = 1_000_000;
++const INLINE_BLOCK_RANGE_CAPACITY: usize = 4;
+@@ -27 +28,39 @@ struct ParsedStream {
+-    blocks: Vec<Range<usize>>,
++    blocks: BlockRanges,
++}
++
++enum BlockRanges {
++    Inline {
++        ranges: [Range<usize>; INLINE_BLOCK_RANGE_CAPACITY],
++        len: usize,
++    },
++    Heap(Vec<Range<usize>>),
++}
++
++impl BlockRanges {
++    fn with_capacity(block_count: usize) -> Self {
++        if block_count <= INLINE_BLOCK_RANGE_CAPACITY {
++            Self::Inline {
++                ranges: std::array::from_fn(|_| 0..0),
++                len: 0,
++            }
++        } else {
++            Self::Heap(Vec::with_capacity(block_count))
++        }
++    }
++
++    fn push(&mut self, range: Range<usize>) {
++        match self {
++            Self::Inline { ranges, len } => {
++                ranges[*len] = range;
++                *len += 1;
++            }
++            Self::Heap(ranges) => ranges.push(range),
++        }
++    }
++
++    fn as_slice(&self) -> &[Range<usize>] {
++        match self {
++            Self::Inline { ranges, len } => &ranges[..*len],
++            Self::Heap(ranges) => ranges,
++        }
++    }
+@@ -279 +318 @@ fn parse_stream(bytes: &[u8]) -> Result<ParsedStream, QoiError> {
+-    let mut blocks = Vec::with_capacity(stored_block_count);
++    let mut blocks = BlockRanges::with_capacity(stored_block_count);
+@@ -330 +369,2 @@ fn decode_parsed_into(
+-    let block_count = stream.blocks.len();
++    let blocks = stream.blocks.as_slice();
++    let block_count = blocks.len();
+@@ -332 +372 @@ fn decode_parsed_into(
+-        decode_blocks_sequential(bytes, header, stream.block_pixels, &stream.blocks, output)?;
++        decode_blocks_sequential(bytes, header, stream.block_pixels, blocks, output)?;
+@@ -339 +379 @@ fn decode_parsed_into(
+-                &stream.blocks,
++                blocks,
+@@ -349 +389 @@ fn decode_parsed_into(
+-            &stream.blocks,
++            blocks,
+diff --git a/tests/restart_qoi.rs b/tests/restart_qoi.rs
+index 55b5f0b..071cfc0 100644
+--- a/tests/restart_qoi.rs
++++ b/tests/restart_qoi.rs
+@@ -70,0 +71,29 @@ fn restart_stream_round_trips_all_qoi_opcode_shapes_and_block_edges() {
++#[test]
++fn restart_stream_handles_inline_block_range_capacity_edges() {
++    let channels = 3;
++    for pixel_count in [1, 16_385, 32_769, 49_153, 65_536, 65_537] {
++        let header = decode::Header {
++            width: pixel_count as u32,
++            height: 1,
++            channels,
++            colorspace: 0,
++        };
++        let pixels = vec![37; pixel_count * usize::from(channels)];
++        let stream = restart_qoi::encode(header, &pixels).unwrap();
++        let expected_blocks = pixel_count.div_ceil(restart_qoi::DEFAULT_BLOCK_PIXELS);
++        let stored_blocks = u32::from_le_bytes(stream[18..22].try_into().unwrap()) as usize;
++        assert_eq!(stored_blocks, expected_blocks);
++        assert_eq!(
++            restart_qoi::decode(&stream).unwrap(),
++            (header, pixels.clone())
++        );
++
++        let mut reused = vec![0; pixels.len()];
++        assert_eq!(
++            restart_qoi::decode_into(&stream, &mut reused).unwrap(),
++            header
++        );
++        assert_eq!(reused, pixels);
++    }
++}
++

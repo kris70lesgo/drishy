@@ -13,7 +13,7 @@ cargo run --release -- index input.qoi input.qoi.idx
 cargo run --release -- decode-indexed input.qoi input.qoi.idx output.png
 ```
 
-The `.qoi` commands read and write the standard QOI format. The `.drq` commands use Drishy's experimental `DRQ1` format, which resets QOI decoding state every 16,384 pixels so CPU workers can decode the blocks independently. Images with at least 65,536 pixels are eligible for parallel decoding. `.drq` files are not QOI-compatible; compare both their decode speed and file size before choosing them.
+The `.qoi` commands read and write the standard QOI format. The `.drq` commands use Drishy's experimental `DRQ1` format, which resets QOI decoding state every 16,384 pixels so CPU workers can decode the blocks independently. Images with at least 65,536 pixels are eligible for parallel decoding. `.drq` files are not QOI-compatible; compare both their decode speed and file size before choosing them. See the [DRQ1 format description](docs/drq1-format.md) for its exact byte layout.
 
 `DRQ1` has a 22-byte header with the dimensions, channel count, colorspace, block size, and block count. A directory stores each block's byte length, followed by the block payloads. Each payload contains standard QOI pixel opcodes and starts with a fresh previous pixel and color-index table. Blocks correspond to consecutive pixels in row-major order, so each worker writes one contiguous section of the output buffer.
 
@@ -77,7 +77,7 @@ python3 scripts/repeat_benchmark.py /path/to/qoi_benchmark_suite --runs 3 --thre
 python3 scripts/repeat_benchmark.py /path/to/qoi_benchmark_suite --mode encode --runs 3 --threads 10
 ```
 
-The runner saves a JSON summary and a companion `.samples.jsonl` file under `benchmark-results/`. Together they contain every raw sample, per-run summaries, the source commit and working-tree state, OS/CPU/Rust details, Rayon thread count, and a SHA-256 fingerprint of the sorted corpus paths and file contents. `--mode encode` isolates encoder timing; `--mode full` also measures decoding. Connect power and close CPU-heavy apps before a series, and keep the power mode and thread count the same across repeats. The benchmark prints raw rows directly with `--raw-samples` if you want to run it without the report script.
+The runner saves a JSON summary and a companion `.samples.jsonl` file under `benchmark-results/`. Together they contain every raw sample, per-run summaries, the source commit, working-tree state and dirty paths, OS/CPU/Rust details, Rayon thread count, and a SHA-256 fingerprint of the sorted corpus paths and file contents. `--mode encode` isolates encoder timing; `--mode full` also measures decoding. Connect power and close CPU-heavy apps before a series, and keep the power mode and thread count the same across repeats. The benchmark prints raw rows directly with `--raw-samples` if you want to run it without the report script.
 
 ### Current result (2026-11-24)
 
