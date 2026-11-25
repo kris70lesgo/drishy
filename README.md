@@ -1,6 +1,4 @@
 <p align="center">
-  <img src="assets/drishy-mark.svg" width="40" height="48" alt="Drishy pixel mark" />
-  &nbsp;&nbsp;
   <img src="assets/drishy-app-icon.svg" width="48" height="48" alt="Drishy app icon" />
 </p>
 
